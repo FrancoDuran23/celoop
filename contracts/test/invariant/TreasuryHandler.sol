@@ -11,7 +11,7 @@ import {ITreasuryPolicy} from "../../src/interfaces/ITreasuryPolicy.sol";
 import {TrackedWARS} from "../utils/TrackedWARS.sol";
 
 /// @notice Drives every public entry point of the treasury and the box factory with random
-/// actors (agent, signers, ex-signers, strangers, vendors) and records ghost state and
+/// actors (agent, auditor, signers, ex-signers, strangers, vendors) and records ghost state and
 /// violations. All treasury/factory calls go through `_call`, which captures their logs.
 contract TreasuryHandler is Test {
     TreasuryPolicy public immutable treasury;
@@ -20,6 +20,7 @@ contract TreasuryHandler is Test {
 
     address[] internal signerPool;
     address[] internal agentPool;
+    address[] internal auditorPool;
     address[] internal vendorPool; // vendors that may get enabled (includes agent addresses)
     address[] internal strangers; // never enabled as vendors
     address[] internal actors;
@@ -58,9 +59,17 @@ contract TreasuryHandler is Test {
     bool public duplicateViolation; // invariant 7
     bool public cuitViolation; // invariant 8
     bool public boxViolation; // invariant 9
+    bool public auditorViolation; // invariant 10
+
+    uint256 public auditedClears;
+    uint256 public auditedFlags;
 
     bytes4 internal currentSelector;
     address internal agentAtCall;
+    address internal auditorAtCall;
+    /// Payments cleared by the auditor in the call being processed.
+    mapping(uint256 => bool) internal clearedNow;
+    uint256[] internal clearedNowIds;
 
     constructor(
         TreasuryPolicy treasury_,
@@ -68,6 +77,7 @@ contract TreasuryHandler is Test {
         BoxFactory factory_,
         address[] memory signerPool_,
         address[] memory agentPool_,
+        address[] memory auditorPool_,
         address[] memory vendorPool_,
         address[] memory strangers_,
         bytes32[] memory lines_,
@@ -78,6 +88,7 @@ contract TreasuryHandler is Test {
         factory = factory_;
         signerPool = signerPool_;
         agentPool = agentPool_;
+        auditorPool = auditorPool_;
         vendorPool = vendorPool_;
         strangers = strangers_;
         lines = lines_;
@@ -87,6 +98,9 @@ contract TreasuryHandler is Test {
         }
         for (uint256 i = 0; i < agentPool_.length; i++) {
             actors.push(agentPool_[i]);
+        }
+        for (uint256 i = 0; i < auditorPool_.length; i++) {
+            actors.push(auditorPool_[i]);
         }
         for (uint256 i = 0; i < vendorPool_.length; i++) {
             actors.push(vendorPool_[i]);
@@ -218,6 +232,7 @@ contract TreasuryHandler is Test {
         (uint256 id, bool executed) = abi.decode(ret, (uint256, bool));
         if (id != expectedId) eventViolation = true;
         if (!executed) pendingIds.push(id);
+        if (executed && auditorAtCall != address(0)) auditorViolation = true; // skipped the auditor
         if (
             executed
                 && (amount > snap.perTxCap
@@ -226,6 +241,53 @@ contract TreasuryHandler is Test {
                     || amount > snap.balance
                     || vendor == agentAtCall)
         ) autoLimitViolation = true;
+    }
+
+    /// Mostly the current auditor, sometimes anyone (must fail).
+    function auditPayment(uint256 callerSeed, uint256 idSeed, uint256 verdictSeed, bytes32 reportHash) public {
+        uint256 id = _pickPayment(idSeed);
+        if (id == 0) return;
+        callerSeed = _h(callerSeed);
+        address current = treasury.auditor();
+        address caller = callerSeed % 5 == 0 || current == address(0) ? _actor(callerSeed / 5) : current;
+        bool cleared = _h(verdictSeed) % 4 != 0;
+        if (uint256(reportHash) % 16 == 0) reportHash = bytes32(0); // must be refused
+        _auditStored(caller, id, cleared, reportHash);
+    }
+
+    function _auditStored(address caller, uint256 id, bool cleared, bytes32 reportHash) internal {
+        ITreasuryPolicy.Payment memory p = treasury.payment(id);
+        AutoSnapshot memory snap = _snapshot(p.vendor, p.lineId);
+
+        (bool ok, bytes memory ret) =
+            _call(caller, address(treasury), abi.encodeCall(treasury.auditPayment, (id, cleared, reportHash)));
+        if (!ok) return;
+        if (caller != auditorAtCall || reportHash == bytes32(0)) auditorViolation = true;
+        if (cleared) auditedClears++;
+        else auditedFlags++;
+        bool executed = abi.decode(ret, (bool));
+        if (executed && !cleared) auditorViolation = true;
+        if (
+            executed
+                && (p.amount > snap.perTxCap
+                    || snap.spent + p.amount > snap.allocated
+                    || snap.vendorSpent + p.amount > snap.vendorCap
+                    || p.amount > snap.balance
+                    || p.vendor == agentAtCall
+                    || p.vendor == auditorAtCall)
+        ) autoLimitViolation = true;
+    }
+
+    function _snapshot(address vendor, bytes32 lineId) internal view returns (AutoSnapshot memory) {
+        ITreasuryPolicy.Budget memory b = treasury.budget(lineId);
+        return AutoSnapshot({
+            perTxCap: treasury.perTxCap(),
+            spent: b.spent,
+            allocated: b.allocated,
+            vendorSpent: treasury.vendorSpentThisPeriod(vendor),
+            vendorCap: treasury.vendorMonthlyCap(),
+            balance: token.balanceOf(address(treasury))
+        });
     }
 
     function approve(uint256 callerSeed, uint256 idSeed) public {
@@ -257,7 +319,7 @@ contract TreasuryHandler is Test {
         // While paused, half of the proposals try to unpause.
         ITreasuryPolicy.ProposalKind kind = treasury.paused() && kindSeed % 2 == 0
             ? ITreasuryPolicy.ProposalKind.Unpause
-            : ITreasuryPolicy.ProposalKind((kindSeed / 2) % 8);
+            : ITreasuryPolicy.ProposalKind((kindSeed / 2) % 9);
         bytes memory data = _proposalData(kind, a, b, c);
         address caller = _signerBiased(callerSeed);
         uint256 thresholdBefore = treasury.threshold();
@@ -337,6 +399,7 @@ contract TreasuryHandler is Test {
         }
         currentSelector = selector;
         agentAtCall = treasury.agent();
+        auditorAtCall = treasury.auditor();
         bool callerWasSigner = treasury.isSigner(caller);
 
         vm.recordLogs();
@@ -348,7 +411,14 @@ contract TreasuryHandler is Test {
         {
             agentViolation = true;
         }
+        if (ok && target == address(treasury) && _isSignerOnly(selector) && caller == auditorAtCall) {
+            auditorViolation = true;
+        }
         _processLogs(logs);
+        for (uint256 i = 0; i < clearedNowIds.length; i++) {
+            clearedNow[clearedNowIds[i]] = false;
+        }
+        delete clearedNowIds;
     }
 
     function _processLogs(Vm.Log[] memory logs) internal {
@@ -358,6 +428,13 @@ contract TreasuryHandler is Test {
             bytes32 sig = log.topics[0];
             if (sig == ITreasuryPolicy.Contribution.selector) {
                 ghostContributions += abi.decode(log.data, (uint256));
+            } else if (sig == ITreasuryPolicy.PaymentAudited.selector) {
+                uint256 id = uint256(log.topics[1]);
+                (bool cleared,) = abi.decode(log.data, (bool, bytes32));
+                if (cleared) {
+                    clearedNow[id] = true;
+                    clearedNowIds.push(id);
+                }
             } else if (sig == ITreasuryPolicy.PaymentExecuted.selector) {
                 _onPaymentExecuted(log);
             }
@@ -388,8 +465,14 @@ contract TreasuryHandler is Test {
 
         if (rule == ITreasuryPolicy.Rule.Auto) {
             autoExecutions++;
-            if (currentSelector != TreasuryPolicy.proposePayment.selector) autoLimitViolation = true;
+            // Automatic payments come out of proposePayment without an auditor, or out of the
+            // auditor's clearance with one; never from anywhere else.
+            bool viaProposal = currentSelector == TreasuryPolicy.proposePayment.selector && auditorAtCall == address(0);
+            bool viaAudit = currentSelector == TreasuryPolicy.auditPayment.selector && clearedNow[id];
+            if (!viaProposal && !viaAudit) auditorViolation = true;
+            if (currentSelector != TreasuryPolicy.proposePayment.selector && !viaAudit) autoLimitViolation = true;
             if (vendor == agentAtCall) agentViolation = true;
+            if (vendor == auditorAtCall) auditorViolation = true;
         } else {
             signerExecutions++;
             if (p.approvals < treasury.threshold()) agentViolation = true;
@@ -442,11 +525,20 @@ contract TreasuryHandler is Test {
             return abi.encode(set, 1 + b % set.length);
         }
         if (kind == ITreasuryPolicy.ProposalKind.SetAgent) {
-            address candidate = b % 10 == 0 ? signerPool[a % signerPool.length] : agentPool[a % agentPool.length];
+            address candidate = b % 10 == 0
+                ? signerPool[a % signerPool.length]
+                : b % 10 == 1 ? auditorPool[a % auditorPool.length] : agentPool[a % agentPool.length];
             return abi.encode(candidate);
         }
         if (kind == ITreasuryPolicy.ProposalKind.SetConfigHash) {
             return abi.encode(bytes32(a));
+        }
+        if (kind == ITreasuryPolicy.ProposalKind.SetAuditor) {
+            // Signers and the agent must be refused; address(0) turns the auditor off.
+            if (c % 10 == 0) return abi.encode(signerPool[a % signerPool.length]);
+            if (c % 10 == 1) return abi.encode(treasury.agent());
+            if (b % 3 == 0) return abi.encode(address(0));
+            return abi.encode(auditorPool[a % auditorPool.length]);
         }
         return "";
     }

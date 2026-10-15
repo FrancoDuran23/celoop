@@ -33,6 +33,8 @@ export interface ExpenseRow {
   lineName: string;
   amount: string;
   rule: "auto" | "signers";
+  /** The auditor's verdict on chain; null = not audited. Missing in reports made before the auditor. */
+  audit?: "cleared" | "flagged" | null;
   overBudget: boolean;
   budgetExpired: boolean;
   invoiceUrl: string | null;

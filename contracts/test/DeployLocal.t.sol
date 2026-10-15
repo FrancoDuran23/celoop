@@ -15,6 +15,7 @@ contract DeployLocalTest is Test {
         address agent = makeAddr("agent");
         vm.setEnv("SIGNERS", string.concat(vm.toString(a), ",", vm.toString(b), ",", vm.toString(c)));
         vm.setEnv("AGENT", vm.toString(agent));
+        vm.setEnv("AUDITOR", vm.toString(makeAddr("auditor")));
         vm.setEnv("THRESHOLD", "2");
         vm.setEnv("PER_TX_CAP", "50000000000000000000000");
 
@@ -22,6 +23,7 @@ contract DeployLocalTest is Test {
         TreasuryPolicy t = TreasuryPolicy(d.treasury);
         assertEq(t.token(), d.token);
         assertEq(t.agent(), agent);
+        assertEq(t.auditor(), makeAddr("auditor"));
         assertEq(t.threshold(), 2);
         assertEq(t.signers().length, 3);
         assertTrue(t.isSigner(a) && t.isSigner(b) && t.isSigner(c));

@@ -14,6 +14,8 @@ export type TreasuryState = {
   signers: Address[];
   threshold: bigint;
   agent: Address;
+  /** zeroAddress when the cooperadora has no auditor. */
+  auditor: Address;
   budgets: BudgetState[];
 };
 
@@ -56,7 +58,7 @@ export async function getBudget(lineId: Hex): Promise<BudgetState & { exists: bo
 export async function getTreasuryState(): Promise<TreasuryState> {
   const client = publicClient();
   const t = treasury();
-  const [balance, paused, perTxCap, vendorMonthlyCap, signers, threshold, agent, lineIds] = await Promise.all([
+  const [balance, paused, perTxCap, vendorMonthlyCap, signers, threshold, agent, auditor, lineIds] = await Promise.all([
     warsBalanceOf(t.address),
     client.readContract({ ...t, functionName: "paused" }),
     client.readContract({ ...t, functionName: "perTxCap" }),
@@ -64,6 +66,7 @@ export async function getTreasuryState(): Promise<TreasuryState> {
     client.readContract({ ...t, functionName: "signers" }),
     client.readContract({ ...t, functionName: "threshold" }),
     client.readContract({ ...t, functionName: "agent" }),
+    client.readContract({ ...t, functionName: "auditor" }),
     client.readContract({ ...t, functionName: "budgetLines" }),
   ]);
   const budgets = await Promise.all(
@@ -72,7 +75,7 @@ export async function getTreasuryState(): Promise<TreasuryState> {
       return { lineId, allocated, spent, periodEnd };
     }),
   );
-  return { balance, paused, perTxCap, vendorMonthlyCap, signers: [...signers], threshold, agent, budgets };
+  return { balance, paused, perTxCap, vendorMonthlyCap, signers: [...signers], threshold, agent, auditor, budgets };
 }
 
 export async function getPayment(id: bigint): Promise<OnchainPayment> {
@@ -86,6 +89,15 @@ export async function getPayment(id: bigint): Promise<OnchainPayment> {
     status: PAYMENT_STATUS[p.status] ?? "none",
     approvals: p.approvals,
   };
+}
+
+export const AUDIT_STATUS = ["none", "cleared", "flagged"] as const;
+export type AuditStatus = (typeof AUDIT_STATUS)[number];
+
+/** The auditor's verdict on a payment, straight from the contract. */
+export async function getPaymentAudit(id: bigint): Promise<{ status: AuditStatus; reportHash: Hex }> {
+  const [status, reportHash] = await publicClient().readContract({ ...treasury(), functionName: "paymentAudit", args: [id] });
+  return { status: AUDIT_STATUS[status] ?? "none", reportHash };
 }
 
 export async function isInvoicePaid(invoiceId: Hex): Promise<boolean> {

@@ -21,6 +21,7 @@ import {MockWARS} from "../src/test/MockWARS.sol";
 ///   CHAIN               local | sepolia | mainnet (default local)
 ///   SIGNERS             comma-separated signer addresses (required)
 ///   AGENT               agent address (required, must not be a signer)
+///   AUDITOR             auditor address (default 0x0 = no auditor; never the agent or a signer)
 ///   THRESHOLD           approvals needed (default: min(2, signer count))
 ///   PER_TX_CAP          automatic per-payment cap in wARS base units (default 100_000e18)
 ///   VENDOR_MONTHLY_CAP  automatic per-vendor 30-day cap in base units (default 300_000e18)
@@ -42,6 +43,7 @@ contract Deploy is Script {
         address[] signers;
         uint256 threshold;
         address agent;
+        address auditor;
         uint256 perTxCap;
         uint256 vendorMonthlyCap;
         bytes32 configHash;
@@ -76,6 +78,7 @@ contract Deploy is Script {
         c.mainnet = keccak256(bytes(vm.envOr("CHAIN", string("local")))) == keccak256("mainnet");
         c.signers = vm.envAddress("SIGNERS", ",");
         c.agent = vm.envAddress("AGENT");
+        c.auditor = vm.envOr("AUDITOR", address(0));
         uint256 defaultThreshold = c.signers.length < 2 ? c.signers.length : 2;
         c.threshold = vm.envOr("THRESHOLD", defaultThreshold);
         c.perTxCap = vm.envOr("PER_TX_CAP", uint256(100_000e18));
@@ -101,7 +104,9 @@ contract Deploy is Script {
         }
         d.treasury = _create(
             type(TreasuryPolicy).creationCode,
-            abi.encode(d.token, c.signers, c.threshold, c.agent, c.perTxCap, c.vendorMonthlyCap, c.configHash),
+            abi.encode(
+                d.token, c.signers, c.threshold, c.agent, c.perTxCap, c.vendorMonthlyCap, c.configHash, c.auditor
+            ),
             c.suffix
         );
         d.boxFactory = _create(type(BoxFactory).creationCode, abi.encode(d.treasury, d.token), c.suffix);

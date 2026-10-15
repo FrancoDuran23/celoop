@@ -24,7 +24,7 @@ contract ReentrancyTest is Test {
         address[] memory signers = new address[](2);
         signers[0] = s1;
         signers[1] = address(evil); // worst case: the token itself can vote
-        treasury = new TreasuryPolicy(address(evil), signers, 2, agent, 100e18, 1_000e18, bytes32(0));
+        treasury = new TreasuryPolicy(address(evil), signers, 2, agent, 100e18, 1_000e18, bytes32(0), address(0));
 
         _pass(ITreasuryPolicy.ProposalKind.SetBudget, abi.encode(LINE, 1_000e18, uint64(block.timestamp + 1 days)));
         _pass(ITreasuryPolicy.ProposalKind.SetVendor, abi.encode(vendor, CUIT, true));

@@ -18,6 +18,7 @@ El diseño completo está en `docs/sdd.md`.
 | [05](05-panel-rendicion.md) | Panel público y rendición (web + PDF) | `app/src/app/page.tsx`, `app/src/app/layout.tsx`, `app/src/app/globals.css`, `app/src/app/rendicion/`, `app/src/app/api/reports/`, `app/src/lib/report/`, `app/src/components/` | esquema de datos | 1 |
 | [06](06-agente-bot.md) | Orquestador, tick y bot de Telegram | `app/src/lib/orchestrator/`, `app/src/lib/bot/`, `app/src/app/api/telegram/`, `app/src/app/api/tick/` | 02, 03 | 2 |
 | [07](07-setup-e2e.md) | Script de configuración, deploy, ERC-8004, e2e contra un fork | `contracts/script/Deploy*.s.sol` (lo coordina con 01), `app/scripts/`, `app/test/` | todos | 3 |
+| [08](08-auditor.md) | Agente auditor: segunda llave que aprueba u observa cada pago, conciliación, informe público | `app/src/lib/auditor/`, `app/src/lib/chain/auditor.ts`, `app/src/app/api/auditor/`, `app/src/app/auditoria/` (y el rol en `TreasuryPolicy`) | 01, 03, 06 | 4 |
 
 ## Base compartida (ya existe; ningún worker la cambia sin avisar)
 

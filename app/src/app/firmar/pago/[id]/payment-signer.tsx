@@ -58,6 +58,21 @@ export function PaymentSigner({ view, treasury, signer, name }: { view: PaymentV
         ) : null}
       </Card>
 
+      {view.audit?.verdict === "flagged" ? (
+        <Notice tone="warn">
+          El auditor observó este pago y no lo dejó salir automático:
+          <ul className="mt-1 list-disc pl-5">
+            {view.audit.observations.map((o) => (
+              <li key={o}>{o}</li>
+            ))}
+          </ul>
+          <a href={view.audit.reportUrl} className="mt-1 inline-block underline underline-offset-4">
+            Ver el informe del auditor
+          </a>
+        </Notice>
+      ) : view.audit ? (
+        <Notice tone="info">El auditor revisó este pago y no encontró problemas.</Notice>
+      ) : null}
       {view.overBudget ? (
         <Notice tone="warn">
           Este pago supera lo que queda en la partida {view.lineName} ({formatPesos(view.lineAvailable)} disponibles). Si lo aprueban, el

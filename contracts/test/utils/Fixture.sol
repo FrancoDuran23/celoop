@@ -33,6 +33,7 @@ abstract contract Fixture is Test {
     address internal s3 = makeAddr("signer3");
     address internal s4 = makeAddr("signer4");
     address internal agent = makeAddr("agent");
+    address internal auditorAddr = makeAddr("auditor");
     address internal v1 = makeAddr("vendor1");
     address internal v2 = makeAddr("vendor2");
     address internal stranger = makeAddr("stranger");
@@ -54,12 +55,20 @@ abstract contract Fixture is Test {
         _fund(INITIAL_FUNDS);
     }
 
+    /// Override to deploy with an auditor (address(0) = none).
+    function _auditorAtDeploy() internal view virtual returns (address) {
+        return address(0);
+    }
+
     function _deployTreasury(address token) internal returns (TreasuryPolicy) {
         address[] memory signers = new address[](3);
         signers[0] = s1;
         signers[1] = s2;
         signers[2] = s3;
-        return new TreasuryPolicy(token, signers, 2, agent, PER_TX_CAP, VENDOR_MONTHLY_CAP, CONFIG_HASH);
+        return
+            new TreasuryPolicy(
+                token, signers, 2, agent, PER_TX_CAP, VENDOR_MONTHLY_CAP, CONFIG_HASH, _auditorAtDeploy()
+            );
     }
 
     function _in(uint256 secs) internal view returns (uint64) {

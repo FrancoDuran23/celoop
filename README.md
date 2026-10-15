@@ -1,6 +1,6 @@
 # Cooperadora Segura
 
-Agente tesorero para cooperadoras escolares argentinas, sobre Celo y con wARS. El diseño está en [`docs/sdd.md`](docs/sdd.md) y las specs por módulo en [`docs/specs/`](docs/specs/README.md).
+Dos agentes para la tesorería de una cooperadora escolar argentina, sobre Celo y con wARS: un **tesorero** que cobra aportes, paga a proveedores dentro del presupuesto votado y arma la rendición, y un **auditor** con su propia llave que revisa cada pago antes de que salga (puede frenarlo, nunca empujarlo). El diseño está en [`docs/sdd.md`](docs/sdd.md) y las specs por módulo en [`docs/specs/`](docs/specs/README.md).
 
 - `contracts/`: contratos en Solidity con Foundry (`TreasuryPolicy`, `BoxFactory`, `DepositBox`).
 - `app/`: Next.js con el bot de Telegram, el orquestador, la página de firma, el panel y la rendición.
@@ -39,10 +39,11 @@ Hace falta Node 20 o más nuevo y [mise](https://mise.jdx.dev), que instala Foun
    - migra y siembra la base;
    - imprime las variables de entorno.
 
-   Pegá esas variables en `app/.env`, junto con `AGENT_PRIVATE_KEY` (en local, la cuenta #1 de anvil: `0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d`) y `RPC_URL`. Si lo corrés contra el fork, `AGENT_PRIVATE_KEY` tiene que ser una clave nueva con saldo (`cast wallet new` y `anvil_setBalance`): en mainnet, las cuentas de prueba de anvil tienen código EIP-7702 y no pueden recibir la identidad ERC-8004. Para volver a empezar contra un anvil nuevo, agregá `--fresh-db` (solo con PGlite).
-6. **Registrar la identidad ERC-8004 del agente**, solo contra el fork. El script genera `app/public/agent-registration.json`.
+   Pegá esas variables en `app/.env`, junto con `AGENT_PRIVATE_KEY` (en local, la cuenta #1 de anvil: `0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d`), `AUDITOR_PRIVATE_KEY` (en local, la cuenta #6: `0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e`) y `RPC_URL`. Si lo corrés contra el fork, `AGENT_PRIVATE_KEY` tiene que ser una clave nueva con saldo (`cast wallet new` y `anvil_setBalance`): en mainnet, las cuentas de prueba de anvil tienen código EIP-7702 y no pueden recibir la identidad ERC-8004. Para volver a empezar contra un anvil nuevo, agregá `--fresh-db` (solo con PGlite).
+6. **Registrar las identidades ERC-8004 de los dos agentes**, solo contra el fork. El script genera `app/public/agent-registration.json` y `app/public/auditor-registration.json`.
    ```bash
    npx tsx scripts/register-agent.ts
+   npx tsx scripts/register-agent.ts --auditor
    ```
 7. **Levantar la app.**
    ```bash
@@ -53,9 +54,10 @@ Hace falta Node 20 o más nuevo y [mise](https://mise.jdx.dev), que instala Foun
    - poné `APP_URL` con esa URL, `TELEGRAM_BOT_TOKEN` y `TELEGRAM_WEBHOOK_SECRET` en `app/.env`;
    - corré `npx tsx scripts/telegram-webhook.ts`;
    - para entrar al bot con tu teléfono, cambiá el `phone` de una persona en `scripts/config/demo.json` antes del paso 5.
-9. **Correr el tick.** En producción lo llama un cron cada minuto. A mano:
+9. **Correr el tick y la ronda del auditor.** En producción los llama un cron cada minuto. A mano:
    ```bash
    curl -X POST -H "Authorization: Bearer $TICK_SECRET" http://localhost:3000/api/tick
+   curl -X POST -H "Authorization: Bearer $TICK_SECRET" http://localhost:3000/api/auditor
    ```
 
 ### Tests
@@ -66,10 +68,11 @@ cd app && npm test                       # incluye test/e2e.test.ts y test/scrip
 cd app && npx vitest run test/e2e.test.ts
 ```
 
-`test/e2e.test.ts` recorre los 6 flujos de la demo (`docs/sdd.md`, sección 9) contra un fork de Celo mainnet:
+`test/e2e.test.ts` recorre los flujos de la demo (`docs/sdd.md`, sección 9) contra un fork de Celo mainnet:
 - levanta el fork;
 - corre `setup.ts` con forge;
-- registra el agente en ERC-8004;
+- registra en ERC-8004 al tesorero y al auditor, cada uno con su llave;
+- el auditor aprueba los pagos limpios y observa una compra partida;
 - usa PGlite y llama directo a los handlers de `/api/telegram`, `/api/tick` y `/api/reports/*`;
 - falsea Telegram, Claude y Ripio.
 
@@ -84,7 +87,7 @@ En una red real, las propuestas de configuración (partidas y proveedores) queda
 ```bash
 cd app
 # 1. Ver el plan (no envía nada)
-CHAIN=mainnet RPC_URL=https://forno.celo.org DEPLOYER_PRIVATE_KEY=0x... AGENT_ADDRESS=0x... \
+CHAIN=mainnet RPC_URL=https://forno.celo.org DEPLOYER_PRIVATE_KEY=0x... AGENT_ADDRESS=0x... AUDITOR_ADDRESS=0x... \
   ATTRIBUTION_CODE=<código> DATABASE_URL=<neon> npx tsx scripts/setup.ts scripts/config/<cooperadora>.json
 # 2. Ejecutarlo
 CHAIN=mainnet ... npx tsx scripts/setup.ts scripts/config/<cooperadora>.json --yes
@@ -93,6 +96,7 @@ CHAIN=mainnet RPC_URL=https://forno.celo.org AGENT_PRIVATE_KEY=0x... APP_URL=htt
   ATTRIBUTION_CODE=<código> FEE_CURRENCY=0x0E2A3e05bc9A16F5292A6170456A710cb89C6f72 DATABASE_URL=<neon> \
   npx tsx scripts/register-agent.ts --yes --dry-run
 CHAIN=mainnet ... npx tsx scripts/register-agent.ts --yes
+CHAIN=mainnet ... AUDITOR_PRIVATE_KEY=0x... npx tsx scripts/register-agent.ts --auditor --yes
 # 4. Webhook de Telegram
 TELEGRAM_BOT_TOKEN=... TELEGRAM_WEBHOOK_SECRET=... APP_URL=https://<app> npx tsx scripts/telegram-webhook.ts
 ```

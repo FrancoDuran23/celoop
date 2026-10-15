@@ -19,6 +19,7 @@ export const PROPOSAL_KINDS = [
   "SetAgent",
   "SetConfigHash",
   "Unpause",
+  "SetAuditor",
 ] as const;
 export type ProposalKindName = (typeof PROPOSAL_KINDS)[number];
 
@@ -50,6 +51,7 @@ const PARAMS = {
   SetAgent: [{ name: "agent", type: "address" }],
   SetConfigHash: [{ name: "configHash", type: "bytes32" }],
   Unpause: [],
+  SetAuditor: [{ name: "auditor", type: "address" }],
 } as const;
 
 /** Index for the contract (`propose(kind, data)`), from a name or a numeric string. */
@@ -103,7 +105,8 @@ export type DecodedProposal =
   | { kind: "SetSigners"; signers: readonly Address[]; threshold: bigint }
   | { kind: "SetAgent"; agent: Address }
   | { kind: "SetConfigHash"; configHash: Hex }
-  | { kind: "Unpause" };
+  | { kind: "Unpause" }
+  | { kind: "SetAuditor"; auditor: Address };
 
 export function decodeProposal(kind: string | number, data: Hex): DecodedProposal {
   const name = proposalKindName(kind);
@@ -138,6 +141,10 @@ export function decodeProposal(kind: string | number, data: Hex): DecodedProposa
     }
     case "Unpause":
       return { kind: name };
+    case "SetAuditor": {
+      const [auditor] = decodeAbiParameters(PARAMS.SetAuditor, data);
+      return { kind: name, auditor };
+    }
   }
 }
 
@@ -209,5 +216,12 @@ export function describeProposal(proposal: DecodedProposal, ctx: DescribeContext
       return { summary: "Actualizar la configuración publicada de la cooperadora.", reasonMatches: null };
     case "Unpause":
       return { summary: "Reanudar los pagos, que hoy están pausados.", reasonMatches: null };
+    case "SetAuditor":
+      return {
+        summary: /^0x0{40}$/i.test(proposal.auditor)
+          ? "Sacar al auditor: los pagos chicos vuelven a salir sin su revisión."
+          : `Cambiar el auditor que revisa los pagos a ${shortAddress(proposal.auditor)}.`,
+        reasonMatches: null,
+      };
   }
 }

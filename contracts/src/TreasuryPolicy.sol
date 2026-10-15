@@ -9,7 +9,8 @@ import {ITreasuryPolicy} from "./interfaces/ITreasuryPolicy.sol";
 
 /// @title TreasuryPolicy
 /// @notice Holds a school cooperative's wARS. The agent can only pay enabled vendors against valid
-/// invoices within automatic limits; everything else needs `threshold` signer approvals.
+/// invoices within automatic limits; everything else needs `threshold` signer approvals. With an
+/// auditor set, an automatic payment also needs the auditor's clearance: two independent keys.
 contract TreasuryPolicy is ITreasuryPolicy, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -28,6 +29,7 @@ contract TreasuryPolicy is ITreasuryPolicy, ReentrancyGuard {
     // ---------------------------------------------------------------------
 
     error NotAgent(address caller);
+    error NotAuditor(address caller);
     error NotSigner(address caller);
     error ContractPaused();
     error NotPaused();
@@ -35,6 +37,9 @@ contract TreasuryPolicy is ITreasuryPolicy, ReentrancyGuard {
     error InvalidToken();
     error InvalidAgent(address agent);
     error AgentIsSigner(address agent);
+    error InvalidAuditor(address auditor);
+    /// The auditor must be a separate party: never the agent, never a signer.
+    error AuditorConflict(address account);
     error InvalidThreshold(uint256 threshold, uint256 signerCount);
     error InvalidSigner(address signer);
     error DuplicateSigner(address signer);
@@ -57,6 +62,8 @@ contract TreasuryPolicy is ITreasuryPolicy, ReentrancyGuard {
     error ContributionMismatch(uint256 expected, uint256 received);
     error UnknownProposal(uint256 proposalId);
     error ProposalAlreadyExecuted(uint256 proposalId);
+    error AlreadyAudited(uint256 paymentId);
+    error MissingReport();
 
     // ---------------------------------------------------------------------
     // Storage
@@ -78,6 +85,11 @@ contract TreasuryPolicy is ITreasuryPolicy, ReentrancyGuard {
         bytes32 fileHash;
     }
 
+    struct Audit {
+        AuditStatus status;
+        bytes32 reportHash;
+    }
+
     struct Proposal {
         ProposalKind kind;
         bool executed;
@@ -94,6 +106,8 @@ contract TreasuryPolicy is ITreasuryPolicy, ReentrancyGuard {
     uint256 private _signerEpoch;
 
     address private _agent;
+    /// address(0) = no auditor: automatic payments go out on proposal, as without this role.
+    address private _auditor;
     uint256 private _perTxCap;
     uint256 private _vendorMonthlyCap;
     bytes32 private _configHash;
@@ -113,6 +127,7 @@ contract TreasuryPolicy is ITreasuryPolicy, ReentrancyGuard {
     mapping(uint256 => PaymentRecord) private _payments;
     mapping(uint256 id => mapping(uint256 epoch => uint256)) private _paymentApprovals;
     mapping(uint256 id => mapping(uint256 epoch => mapping(address => bool))) private _paymentVoted;
+    mapping(uint256 => Audit) private _audits;
 
     /// Proposal ids start at 1; `_proposalCount` is the last id issued.
     uint256 private _proposalCount;
@@ -126,6 +141,11 @@ contract TreasuryPolicy is ITreasuryPolicy, ReentrancyGuard {
 
     modifier onlyAgent() {
         if (msg.sender != _agent) revert NotAgent(msg.sender);
+        _;
+    }
+
+    modifier onlyAuditor() {
+        if (msg.sender != _auditor) revert NotAuditor(msg.sender);
         _;
     }
 
@@ -145,7 +165,10 @@ contract TreasuryPolicy is ITreasuryPolicy, ReentrancyGuard {
         address agent_,
         uint256 perTxCap_,
         uint256 vendorMonthlyCap_,
-        bytes32 configHash_
+        bytes32 configHash_,
+        // address(0) is a valid choice: no auditor.
+        // forge-lint: disable-next-line(missing-zero-check)
+        address auditor_
     ) {
         if (token_ == address(0)) revert InvalidToken();
         _token = IERC20(token_);
@@ -153,6 +176,8 @@ contract TreasuryPolicy is ITreasuryPolicy, ReentrancyGuard {
         if (agent_ == address(0)) revert InvalidAgent(agent_);
         _checkAgent(agent_);
         _agent = agent_;
+        _checkAuditor(auditor_);
+        _auditor = auditor_;
         _setSigners(signers_, threshold_);
 
         _perTxCap = perTxCap_;
@@ -161,6 +186,7 @@ contract TreasuryPolicy is ITreasuryPolicy, ReentrancyGuard {
 
         emit SignersSet(signers_, threshold_);
         emit AgentSet(agent_);
+        emit AuditorSet(auditor_);
         emit CapsSet(perTxCap_, vendorMonthlyCap_);
         emit ConfigHashSet(configHash_);
     }
@@ -219,7 +245,8 @@ contract TreasuryPolicy is ITreasuryPolicy, ReentrancyGuard {
 
         emit PaymentProposed(paymentId, vendor, lineId, amount, invoiceId, fileHash);
 
-        if (_withinAutoLimits(vendor, amount, line)) {
+        // With an auditor, nothing goes out automatically until it clears the payment.
+        if (_auditor == address(0) && _withinAutoLimits(vendor, amount, line)) {
             _executePayment(paymentId, p, Rule.Auto);
             executed = true;
         }
@@ -263,6 +290,30 @@ contract TreasuryPolicy is ITreasuryPolicy, ReentrancyGuard {
         _invoicePending[p.invoiceId] = false;
 
         emit PaymentRejected(paymentId, msg.sender);
+    }
+
+    /// @inheritdoc ITreasuryPolicy
+    function auditPayment(uint256 paymentId, bool cleared, bytes32 reportHash)
+        external
+        nonReentrant
+        onlyAuditor
+        returns (bool executed)
+    {
+        if (_paused) revert ContractPaused();
+        if (reportHash == bytes32(0)) revert MissingReport();
+        PaymentRecord storage p = _payments[paymentId];
+        if (p.status != PaymentStatus.Pending) revert PaymentNotPending(paymentId);
+        Audit storage audit = _audits[paymentId];
+        if (audit.status != AuditStatus.None) revert AlreadyAudited(paymentId);
+
+        audit.status = cleared ? AuditStatus.Cleared : AuditStatus.Flagged;
+        audit.reportHash = reportHash;
+        emit PaymentAudited(paymentId, msg.sender, cleared, reportHash);
+
+        if (cleared && _withinAutoLimits(p.vendor, p.amount, _budgets[p.lineId])) {
+            _executePayment(paymentId, p, Rule.Auto);
+            executed = true;
+        }
     }
 
     // ---------------------------------------------------------------------
@@ -320,6 +371,10 @@ contract TreasuryPolicy is ITreasuryPolicy, ReentrancyGuard {
 
     function agent() external view returns (address) {
         return _agent;
+    }
+
+    function auditor() external view returns (address) {
+        return _auditor;
     }
 
     function signers() external view returns (address[] memory) {
@@ -386,6 +441,11 @@ contract TreasuryPolicy is ITreasuryPolicy, ReentrancyGuard {
         });
     }
 
+    function paymentAudit(uint256 paymentId) external view returns (AuditStatus status, bytes32 reportHash) {
+        Audit storage audit = _audits[paymentId];
+        return (audit.status, audit.reportHash);
+    }
+
     function paymentCount() external view returns (uint256) {
         return _paymentCount;
     }
@@ -427,7 +487,7 @@ contract TreasuryPolicy is ITreasuryPolicy, ReentrancyGuard {
     function _withinAutoLimits(address vendor, uint256 amount, Budget storage line) private view returns (bool) {
         return amount <= _perTxCap && line.spent + amount <= line.allocated
             && vendorSpentThisPeriod(vendor) + amount <= _vendorMonthlyCap && amount <= _token.balanceOf(address(this))
-            && vendor != _agent;
+            && vendor != _agent && vendor != _auditor;
     }
 
     /// Single execution path for both rules. Checks, then effects, then the transfer.
@@ -514,12 +574,14 @@ contract TreasuryPolicy is ITreasuryPolicy, ReentrancyGuard {
             abi.decode(data, (uint256, uint256));
         } else if (kind == ProposalKind.SetSigners) {
             (address[] memory newSigners, uint256 newThreshold) = abi.decode(data, (address[], uint256));
-            _checkSignerSet(newSigners, newThreshold, _agent);
+            _checkSignerSet(newSigners, newThreshold, _agent, _auditor);
         } else if (kind == ProposalKind.SetAgent) {
             address newAgent = abi.decode(data, (address));
             _checkAgent(newAgent);
         } else if (kind == ProposalKind.SetConfigHash) {
             abi.decode(data, (bytes32));
+        } else if (kind == ProposalKind.SetAuditor) {
+            _checkAuditor(abi.decode(data, (address)));
         }
         // Unpause takes no data; it is validated at execution (must be paused).
     }
@@ -584,6 +646,11 @@ contract TreasuryPolicy is ITreasuryPolicy, ReentrancyGuard {
             bytes32 newConfigHash = abi.decode(data, (bytes32));
             _configHash = newConfigHash;
             emit ConfigHashSet(newConfigHash);
+        } else if (kind == ProposalKind.SetAuditor) {
+            address newAuditor = abi.decode(data, (address));
+            _checkAuditor(newAuditor);
+            _auditor = newAuditor;
+            emit AuditorSet(newAuditor);
         } else {
             // ProposalKind.Unpause
             if (!_paused) revert NotPaused();
@@ -598,7 +665,7 @@ contract TreasuryPolicy is ITreasuryPolicy, ReentrancyGuard {
 
     /// Validates and stores a signer set. Caller must have cleared the previous set.
     function _setSigners(address[] memory newSigners, uint256 newThreshold) private {
-        _checkSignerSet(newSigners, newThreshold, _agent);
+        _checkSignerSet(newSigners, newThreshold, _agent, _auditor);
         uint256 count = newSigners.length;
         for (uint256 i = 0; i < count; ++i) {
             address s = newSigners[i];
@@ -611,7 +678,12 @@ contract TreasuryPolicy is ITreasuryPolicy, ReentrancyGuard {
     }
 
     /// Stateless checks of a signer set (duplicates are detected with an O(n^2) scan, n <= MAX_SIGNERS).
-    function _checkSignerSet(address[] memory newSigners, uint256 newThreshold, address currentAgent) private pure {
+    function _checkSignerSet(
+        address[] memory newSigners,
+        uint256 newThreshold,
+        address currentAgent,
+        address currentAuditor
+    ) private pure {
         uint256 count = newSigners.length;
         if (count > MAX_SIGNERS) revert TooManySigners(count);
         if (newThreshold == 0 || newThreshold > count) revert InvalidThreshold(newThreshold, count);
@@ -622,6 +694,8 @@ contract TreasuryPolicy is ITreasuryPolicy, ReentrancyGuard {
             if (s == address(0)) revert InvalidSigner(s);
             // forge-lint: disable-next-line(require-revert-in-loop)
             if (s == currentAgent) revert AgentIsSigner(s);
+            // forge-lint: disable-next-line(require-revert-in-loop)
+            if (s == currentAuditor) revert AuditorConflict(s);
             for (uint256 j = 0; j < i; ++j) {
                 // forge-lint: disable-next-line(require-revert-in-loop)
                 if (newSigners[j] == s) revert DuplicateSigner(s);
@@ -632,6 +706,14 @@ contract TreasuryPolicy is ITreasuryPolicy, ReentrancyGuard {
     function _checkAgent(address newAgent) private view {
         if (newAgent == address(0) || newAgent == address(this)) revert InvalidAgent(newAgent);
         if (_isSigner[newAgent]) revert AgentIsSigner(newAgent);
+        if (newAgent == _auditor) revert AuditorConflict(newAgent);
+    }
+
+    /// address(0) is allowed: it turns the auditor off.
+    function _checkAuditor(address newAuditor) private view {
+        if (newAuditor == address(0)) return;
+        if (newAuditor == address(this) || newAuditor == address(_token)) revert InvalidAuditor(newAuditor);
+        if (newAuditor == _agent || _isSigner[newAuditor]) revert AuditorConflict(newAuditor);
     }
 
     function _checkVendor(address vendor, uint64 cuit, bool enabled) private view {

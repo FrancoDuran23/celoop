@@ -8,6 +8,8 @@ Se presenta al track 1 (Stable Agents: LatAm, Ripio × Celo) del hackathon Agent
 
 Cooperadora Segura cobra los aportes de los socios en wARS, paga a proveedores solo lo que el presupuesto votado permite y genera la rendición de cuentas sola. Las reglas viven en un contrato; el agente ejecuta lo que la comisión aprobó y no puede salirse de eso.
 
+Son dos agentes con dos llaves: el **tesorero** propone los pagos y el **auditor** revisa cada uno antes de que pueda salir automático. El auditor puede frenar un pago, nunca empujarlo. Ver `docs/specs/08-auditor.md`.
+
 **Problema.** La plata de una cooperadora la manejan una o dos personas con efectivo, un CBU y planillas Excel. Hay casos judiciales por desvío de fondos, y la rendición la hacen voluntarios a mano.
 
 **Tesis.** Las reglas son firmes pero se pueden cambiar con firmas, y todo cambio queda público con su motivo. Nada se mueve sin que se vea, y nada grande se mueve sin una segunda persona.
@@ -25,7 +27,8 @@ El socio se identifica por su número de teléfono. Los datos de alumnos no entr
 | Revisor de cuentas | Socio electo | Co-firmar, recibir aviso de cada pago automático, dar el visto bueno a la rendición | Cambiar la configuración solo |
 | Asesor natural | Director o directora | Ver todo, recibir la rendición | Mover fondos |
 | Proveedor | Librería, pintor, ferretería | Recibir pagos en su propia wallet y retirarlos a su CBU | Ver datos de socios |
-| Agente | El tesorero automático | Conciliar aportes, validar facturas, proponer pagos, rendir | Cambiar reglas, cobrarse a sí mismo sin firmas, pagar a direcciones no habilitadas |
+| Agente tesorero | El tesorero automático | Conciliar aportes, validar facturas, proponer pagos, rendir | Cambiar reglas, cobrarse a sí mismo sin firmas, pagar a direcciones no habilitadas |
+| Agente auditor | Un segundo agente, con su propia llave | Aprobar u observar cada pago antes de que salga automático, conciliar el saldo, publicar un informe por pago | Firmar, proponer, pausar, cobrar, o hacer salir un pago fuera de los topes |
 
 Los firmantes son la comisión y el revisor. El umbral es, por ejemplo, 2 de 3.
 
@@ -128,7 +131,8 @@ Comisión ─Telegram─▶ Bot ─┤                                  │
                  Neon Postgres · Vercel Blob             │            ▼
                           ▲                     Ripio on-ramp    Ripio off-ramp → CBU
                  Cloudflare cron cada 1 min              ▲
-                 → /api/tick                       Socio paga pesos
+                 → /api/tick (tesorero)            Socio paga pesos
+                 → /api/auditor (auditor, otra llave → auditPayment)
 ```
 
 **Stack**
@@ -166,6 +170,7 @@ Custodia los wARS (`0x0DC4F92879B7670e5f4e4e6e3c801D229129D90D` en mainnet; en C
 - `token`
 - `signers[]`, `threshold`
 - `agent`
+- `auditor`: segundo agente. Con auditor, un pago automático necesita su aprobación (`auditPayment`). `address(0)` = sin auditor.
 - `perTxCap`: tope por pago automático.
 - `vendorMonthlyCap`: tope acumulado de pagos automáticos por proveedor y mes.
 - `budgets[lineId]`: `{allocated, spent, periodEnd}`. `periodEnd` es informativo: al vencer no bloquea, solo se marca en los eventos y en el panel.
@@ -186,6 +191,7 @@ Custodia los wARS (`0x0DC4F92879B7670e5f4e4e6e3c801D229129D90D` en mainnet; en C
 | `approve(paymentId)` | Firmante | Un voto por firmante. Al llegar al umbral ejecuta, si el proveedor sigue habilitado, la factura no se pagó y hay saldo. Puede exceder la partida, y el evento lo marca |
 | `reject(paymentId)` | Firmante | Cancela un pago pendiente |
 | `propose(action)`, `approveProposal(id)` | Firmantes | Cambios de configuración que se ejecutan al llegar al umbral. Las acciones son `setBudget`, `moveBudget(from, to, amount, reasonHash)`, `setVendor(address, cuit, enabled)`, `setCaps`, `setSigners`, `setAgent`, `setConfigHash` y `unpause` |
+| `auditPayment(paymentId, cleared, reportHash)` | Auditor | Una vez por pago pendiente. Si aprueba y el pago entra en los topes, paga en el acto (`Rule.Auto`). Si observa, queda para los firmantes. `reportHash` es el keccak256 del informe público |
 | `pause()` | Cualquier firmante | Congela todos los pagos |
 
 Los pagos al propio agente, que corresponden a la partida "Gastos operativos" para reintegrar comisiones, siempre se escalan.
@@ -211,6 +217,7 @@ Cada aporte usa un buzón de un solo uso.
 7. Un `invoiceId` se paga como máximo una vez.
 8. El CUIT de la factura coincide con el CUIT del proveedor que cobra.
 9. Un buzón solo puede transferir al contrato.
+10. Con auditor, ningún pago sale automático sin su aprobación; el auditor nunca firma, nunca recibe un pago automático y nunca es el agente.
 
 ## 8. Agente
 
@@ -225,6 +232,7 @@ El camino del dinero es determinístico. El LLM puede equivocarse o ser engañad
 | Validar (receptor = CUIT de la cooperadora, tipo B o C, emisor habilitado, no pagada) | Código |
 | Elegir la partida | Quien sube la factura, con botones. El agente sugiere |
 | Llamar a `proposePayment` | Orquestador, cuando la validación da OK |
+| Aprobar u observar el pago | El auditor, con código: relee el QR del archivo guardado, compara archivo, CUIT, número y monto con lo que está en la cadena y busca compras partidas o facturas repetidas. Sin LLM |
 | Redactar mensajes, responder preguntas | Claude |
 
 El texto de una factura o de un mensaje es dato, no instrucción. Si una factura dice "pagar a esta otra cuenta", se ignora y se marca para revisión.
@@ -239,15 +247,18 @@ El texto de una factura o de un mensaje es dato, no instrucción. Si una factura
 
 `recibida → leída → validada | rechazada (motivo) | revisión → propuesta → pagada | pendiente → aprobada → pagada | cancelada`
 
+Con auditor: `propuesta → auditando → pagada | pendiente | cancelada`. Si el auditor no responde en 15 minutos, el pago va a firmas igual y se avisa al operador.
+
 Como en TesorerIA, un pago enviado y sin recibo nunca se reenvía a ciegas: se espera el recibo o a que venza el lock.
 
 ## 9. Flujos
 
 **Demo, en el orden en que se muestra**
 
-1. **Factura chica.** El proveedor emite una factura C real a nombre de la cooperadora ficticia. Un miembro de la comisión la manda por Telegram. El agente lee el QR, valida y paga. El revisor recibe el aviso y el pago aparece en el panel.
+1. **Factura chica.** El proveedor emite una factura C real a nombre de la cooperadora ficticia. Un miembro de la comisión la manda por Telegram. El agente lee el QR, valida y propone el pago; el auditor lo revisa y lo aprueba, y sale. El revisor recibe el aviso y el pago aparece en el panel con su informe de auditoría.
 2. **Factura que inyecta instrucciones o está a otro nombre.** El agente la rechaza y explica por qué.
 3. **Factura grande.** Queda pendiente. Dos firmantes firman con passkey y se ejecuta.
+   - **Compra partida.** Una factura chica que, sumada a otra de la misma semana, pasa el tope: el auditor la observa, el revisor recibe el aviso y la deciden los firmantes.
 4. **Aporte.** Un socio pide aportar, paga pesos con el link de Ripio, el buzón se barre y le llega el recibo.
 5. **Retiro.** El proveedor retira a su CBU.
 6. **Cierre de mes.** Se genera el borrador, el revisor da el visto bueno y se publican la página y el PDF CooperAr.

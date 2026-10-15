@@ -281,6 +281,19 @@ async function applyLog(db: Db, log: DecodedLog, occurredAt: Date, unidentified:
       return;
     }
 
+    case "PaymentAudited": {
+      await db
+        .update(payments)
+        .set({
+          audit: a.cleared ? "cleared" : "flagged",
+          auditReportHash: a.reportHash as Hex,
+          auditTxHash: txHash,
+          updatedAt: new Date(),
+        })
+        .where(eq(payments.paymentId, a.paymentId as bigint));
+      return;
+    }
+
     case "ProposalCreated": {
       const kind = Number(a.kind);
       await db
@@ -328,8 +341,8 @@ async function applyLog(db: Db, log: DecodedLog, occurredAt: Date, unidentified:
     }
 
     // BudgetSet / BudgetMoved refresh budget_index from the contract (see indexRange).
-    // BoxSwept, VendorSet, CapsSet, SignersSet, AgentSet, ConfigHashSet, Paused, Unpaused:
-    // chain_events only.
+    // BoxSwept, VendorSet, CapsSet, SignersSet, AgentSet, AuditorSet, ConfigHashSet, Paused,
+    // Unpaused: chain_events only.
     default:
       return;
   }

@@ -12,6 +12,7 @@ Un mismo checkout con propiedad de archivos separada (ver `README.md`). El coord
 | 1 | 05 Panel y rendición | hecho | 23 tests verificados. El coordinador ya reemplazó el import de live-balance.ts por getTreasuryState |
 | 2 | 06 Agente y bot | hecho | 63 tests verificados por el coordinador. Incluye resolver facturas en revisión (un revisor o el presidente, nunca quien la cargó, y sin saltear las reglas fijas), barrido diario de buzones vencidos y alertas al rol `operador` |
 | 3 | 07 Setup y e2e | hecho | El e2e cubre los 6 flujos y el tag en todas las transacciones, y pasó 3 de 3 veces. `setup.ts` funciona contra un anvil limpio. Deploy a Sepolia y mainnet preparado, sin ejecutar |
+| 4 | 08 Auditor | hecho, falta la corrida completa | Rol `auditor` en `TreasuryPolicy` (`auditPayment`, `SetAuditor`, invariante 10), módulo `lib/auditor`, estado `auditando` en el tesorero, `/api/auditor`, página `/auditoria/[id]`, segunda identidad ERC-8004, columna en la rendición. Ver abajo |
 
 ## Reglas de la ola 1
 
@@ -59,10 +60,18 @@ Un mismo checkout con propiedad de archivos separada (ver `README.md`). El coord
 - Contratos: 58 tests pasan.
 - `next build` compila. Sigue el aviso de `pdfjs-dist`.
 
+## Ola 4: agente auditor (spec 08)
+
+- Contratos: 79 tests pasan (21 nuevos en `Auditor.t.sol`) y los 10 invariantes, con `auditPayment` y `SetAuditor` en el handler. Se confirmó que el fuzzing ejercita aprobaciones del auditor y pagos automáticos por esa vía.
+- El constructor de `TreasuryPolicy` suma un parámetro al final (`auditor`, que puede ser `address(0)`). El ABI se regeneró.
+- Base: migración `0001` con la tabla `audits` y las columnas `audit*` en `payments`.
+- El cron externo tiene que llamar a `/api/auditor`, además de `/api/tick`, cada minuto, con el mismo `TICK_SECRET`.
+- Variable nueva: `AUDITOR_PRIVATE_KEY`, en una cuenta distinta de la del agente y con USDT para las comisiones.
+
 ## Pendientes antes de mainnet (necesitan a Franco)
 
 - Tag ERC-8021 (`ATTRIBUTION_CODE`).
-- Cuentas: Neon, Vercel, Pimlico (API key y política de patrocinio), bot de Telegram, Anthropic API key, y USDT para las comisiones del agente.
+- Cuentas: Neon, Vercel, Pimlico (API key y política de patrocinio), bot de Telegram, Anthropic API key, y USDT para las comisiones del agente y del auditor.
 - Probar con una key real la lectura de facturas en PDF en Vercel, el paymaster de Pimlico y los parámetros de la URL de Ripio.
 - Decidir si las propuestas tienen vencimiento o cancelación (hoy no tienen).
 - Confirmar las columnas de la rendición con las planillas reales (CooperAr o Jujuy).

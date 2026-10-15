@@ -65,6 +65,11 @@ export function agentAccount(): LocalAccount {
   return privateKeyToAccount(required("AGENT_PRIVATE_KEY") as `0x${string}`);
 }
 
+/** The auditor's key, from AUDITOR_PRIVATE_KEY. A different account: it can only clear or flag payments. */
+export function auditorAccount(): LocalAccount {
+  return privateKeyToAccount(required("AUDITOR_PRIVATE_KEY") as `0x${string}`);
+}
+
 const resolvedChains = new Map<string, Chain>();
 
 /**
@@ -82,10 +87,10 @@ export async function resolveChain(): Promise<Chain> {
   return chain;
 }
 
-/** Wallet client that signs with the agent's key on the resolved chain. */
-export async function agentWalletClient(): Promise<WalletClient> {
+/** Wallet client that signs with `account` (the agent's key by default) on the resolved chain. */
+export async function agentWalletClient(account: LocalAccount = agentAccount()): Promise<WalletClient> {
   return createWalletClient({
-    account: agentAccount(),
+    account,
     chain: await resolveChain(),
     transport: http(rpcUrl()),
   });

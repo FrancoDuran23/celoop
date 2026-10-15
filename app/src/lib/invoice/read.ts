@@ -7,6 +7,27 @@ const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif
 
 const REVIEW = "Los datos del QR y los que leyó la IA no coinciden; la tiene que revisar una persona";
 
+/**
+ * Only the ARCA QR, never the LLM: what the auditor uses to re-read a file on its own.
+ * null when the file has no readable QR (or can't be opened).
+ */
+export async function readArcaQr(file: InvoiceFile): Promise<InvoiceFields | null> {
+  try {
+    if (file.mimeType === "application/pdf") {
+      const pdf = await readPdf(file.bytes);
+      for (const png of pdf.pagePngs) {
+        const hit = await findArcaQrInImage(png);
+        if (hit) return hit.fields;
+      }
+      return null;
+    }
+    if (!IMAGE_TYPES.has(file.mimeType)) return null;
+    return (await findArcaQrInImage(file.bytes))?.fields ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function readInvoice(
   file: InvoiceFile,
   deps: { extractWithLlm?: LlmExtractor } = {},

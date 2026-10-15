@@ -16,6 +16,7 @@ contract DeployTest is Test {
     address b = makeAddr("b");
     address c = makeAddr("c");
     address agent = makeAddr("agent");
+    address auditor = makeAddr("auditor");
     Deploy script;
 
     function setUp() public {
@@ -33,6 +34,7 @@ contract DeployTest is Test {
             signers: signers,
             threshold: 2,
             agent: agent,
+            auditor: auditor,
             perTxCap: 50_000e18,
             vendorMonthlyCap: 150_000e18,
             configHash: keccak256("acta"),
@@ -44,6 +46,7 @@ contract DeployTest is Test {
         TreasuryPolicy t = TreasuryPolicy(d.treasury);
         assertEq(t.token(), d.token);
         assertEq(t.agent(), agent);
+        assertEq(t.auditor(), auditor);
         assertEq(t.threshold(), 2);
         address[] memory s = t.signers();
         assertEq(s.length, 3);
@@ -108,12 +111,14 @@ contract DeployTest is Test {
     function test_ConfigFromEnv() public {
         vm.setEnv("SIGNERS", string.concat(vm.toString(a), ",", vm.toString(b), ",", vm.toString(c)));
         vm.setEnv("AGENT", vm.toString(agent));
+        vm.setEnv("AUDITOR", vm.toString(auditor));
         vm.setEnv("THRESHOLD", "2");
         vm.setEnv("PER_TX_CAP", "50000000000000000000000");
         vm.setEnv("ATTRIBUTION_SUFFIX", vm.toString(SUFFIX));
         Deploy.Config memory cfg = script.configFromEnv();
         assertEq(cfg.signers.length, 3);
         assertEq(cfg.agent, agent);
+        assertEq(cfg.auditor, auditor);
         assertEq(cfg.threshold, 2);
         assertEq(cfg.perTxCap, 50_000e18);
         assertEq(cfg.suffix, SUFFIX);

@@ -5,7 +5,8 @@
 //   CHAIN=sepolia ... npx tsx scripts/setup.ts <config> --yes    # sends
 //
 // Flags: --yes (required off local), --fresh-db (local PGlite: start from an empty database).
-// Reads CHAIN, RPC_URL, DEPLOYER_PRIVATE_KEY, AGENT_PRIVATE_KEY or AGENT_ADDRESS, ATTRIBUTION_CODE,
+// Reads CHAIN, RPC_URL, DEPLOYER_PRIVATE_KEY, AGENT_PRIVATE_KEY or AGENT_ADDRESS, AUDITOR_PRIVATE_KEY or
+// AUDITOR_ADDRESS (local defaults to anvil #6), ATTRIBUTION_CODE,
 // DATABASE_URL and, on Sepolia, WARS_ADDRESS, from the environment or app/.env.
 import "dotenv/config";
 import { parseArgs } from "./lib/guard";

@@ -46,6 +46,8 @@ export const urls = {
   vendor: (appUrl: string, token: string) => `${base(appUrl)}/proveedor?t=${q(token)}`,
   report: (appUrl: string, period: string, token?: string) =>
     `${base(appUrl)}/rendicion/${period}${token ? `?token=${q(token)}` : ""}`,
+  /** The auditor's public report on a payment. */
+  audit: (appUrl: string, paymentId: bigint | string) => `${base(appUrl)}/auditoria/${paymentId}`,
 };
 
 /** Link for a signer to approve or reject a pending payment. Single use, 24 hours. */

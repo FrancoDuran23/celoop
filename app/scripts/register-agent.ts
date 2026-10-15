@@ -5,16 +5,25 @@
 //   CHAIN=mainnet ... npx tsx scripts/register-agent.ts          # shows the plan, sends nothing
 //   CHAIN=mainnet ATTRIBUTION_CODE=... npx tsx scripts/register-agent.ts --yes
 //
-// Flags: --yes (required off local), --dry-run (simulate only), --force (register a second identity).
+//   ... npx tsx scripts/register-agent.ts --auditor   # the auditor's own identity (AUDITOR_PRIVATE_KEY)
+//
+// Flags: --yes (required off local), --dry-run (simulate only), --force (register a second identity),
+// --auditor (register the auditor instead of the treasurer; writes public/auditor-registration.json).
 // Reads CHAIN, RPC_URL, AGENT_PRIVATE_KEY, APP_URL, ATTRIBUTION_CODE, FEE_CURRENCY, DATABASE_URL and,
-// optionally, AGENT_NAME, AGENT_DESCRIPTION, TELEGRAM_BOT_USERNAME, IDENTITY_REGISTRY.
+// optionally, AGENT_NAME, AGENT_DESCRIPTION (AUDITOR_NAME, AUDITOR_DESCRIPTION), TELEGRAM_BOT_USERNAME,
+// IDENTITY_REGISTRY. With --auditor it reads AUDITOR_PRIVATE_KEY instead of AGENT_PRIVATE_KEY.
 import "dotenv/config";
 import { parseArgs } from "./lib/guard";
 import { registerAgent } from "./lib/register-agent";
 
 async function main() {
   const { flags } = parseArgs(process.argv.slice(2));
-  const result = await registerAgent({ yes: flags.has("yes"), dryRun: flags.has("dry-run"), force: flags.has("force") });
+  const result = await registerAgent({
+    yes: flags.has("yes"),
+    dryRun: flags.has("dry-run"),
+    force: flags.has("force"),
+    role: flags.has("auditor") ? "auditor" : "treasurer",
+  });
   if (result.status === "needs-confirmation") process.exit(2);
   if (result.status === "refused" || result.status === "already-registered") process.exit(1);
 }

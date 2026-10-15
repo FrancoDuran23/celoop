@@ -9,7 +9,9 @@ const schema = z.object({
   CHAIN: z.enum(["local", "sepolia", "mainnet"]).default("local"),
   RPC_URL: z.string().url().optional(),
   AGENT_PRIVATE_KEY: hex.optional(),
-  /** "on" lets the agent send transactions; anything else is a dry run. */
+  /** The auditor's own key: it can only clear or flag payments on the contract. Never the agent's key. */
+  AUDITOR_PRIVATE_KEY: hex.optional(),
+  /** "on" lets the agent and the auditor send transactions; anything else is a dry run. */
   AGENT_SEND: z.string().default("off"),
   TREASURY_ADDRESS: address.optional(),
   BOX_FACTORY_ADDRESS: address.optional(),

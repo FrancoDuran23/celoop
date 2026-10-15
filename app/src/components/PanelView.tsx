@@ -110,11 +110,14 @@ export function PanelView({ data }: { data: PanelData | null }) {
                   {e.rule === "auto" ? "Automático (dentro del tope)" : `Con firmas (${e.approvals} de ${e.signerCount})`}
                 </p>
                 <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1">
+                  {e.audit === "cleared" ? <Tag tone="ok">Revisado por el auditor</Tag> : null}
+                  {e.audit === "flagged" ? <Tag tone="warn">Observado por el auditor</Tag> : null}
                   {e.overBudget ? <Tag tone="danger">Excedió la partida</Tag> : null}
                   {e.budgetExpired ? <Tag tone="warn">Presupuesto vencido</Tag> : null}
                   {e.invoiceUrl ? (
                     <a href={e.invoiceUrl} target="_blank" rel="noopener noreferrer" className="text-sm">Ver factura</a>
                   ) : null}
+                  {e.audit ? <a href={`/auditoria/${e.paymentId}`} className="text-sm">Informe del auditor</a> : null}
                   <TxLink txHash={e.txHash} chainId={header.chainId} />
                 </div>
               </li>
@@ -139,6 +142,12 @@ export function PanelView({ data }: { data: PanelData | null }) {
                   Tiene {p.approvals} {p.approvals === 1 ? "firma" : "firmas"}
                   {p.missing > 0 ? `, faltan ${p.missing}.` : ", ya alcanza el mínimo."}
                 </p>
+                {p.audit ? (
+                  <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1">
+                    {p.audit === "flagged" ? <Tag tone="warn">Observado por el auditor</Tag> : <Tag tone="ok">Revisado por el auditor</Tag>}
+                    <a href={`/auditoria/${p.paymentId}`} className="text-sm">Informe del auditor</a>
+                  </div>
+                ) : null}
               </li>
             ))}
           </ul>

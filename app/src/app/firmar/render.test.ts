@@ -44,11 +44,12 @@ describe("signing pages", () => {
           lineAvailable: (BigInt(50000) * E18).toString(),
           paused: false,
           alreadyApproved: false,
+          audit: { verdict: "flagged", observations: ["Puede ser una compra partida en varias facturas."], reportUrl: "/auditoria/3" },
         },
       }),
     );
     const t = text(html);
-    for (const s of ["Ferretería El Tornillo", "20-12345678-9", "$ 80.000,00", "Mantenimiento", "Ver la factura", "1 de 2 firmas", "falta 1", "supera lo que queda", "Aprobar", "Rechazar"]) {
+    for (const s of ["Ferretería El Tornillo", "20-12345678-9", "$ 80.000,00", "Mantenimiento", "Ver la factura", "1 de 2 firmas", "falta 1", "supera lo que queda", "El auditor observó este pago", "compra partida", "Ver el informe del auditor", "Aprobar", "Rechazar"]) {
       expect(t).toContain(s);
     }
     expect(t.toLowerCase()).not.toContain("gas");
