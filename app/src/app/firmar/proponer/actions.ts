@@ -14,6 +14,6 @@ export async function saveProposalMeta(input: ProposalMetaInput): Promise<Reason
     return result;
   } catch (error) {
     console.error("saveProposalMeta failed", error);
-    return { ok: false, message: "No pudimos guardar los datos de la propuesta." };
+    return { ok: false, message: "we couldn't save the proposal details." };
   }
 }

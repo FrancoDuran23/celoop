@@ -8,7 +8,7 @@ export async function POST(request: Request) {
   try {
     body = await request.json();
   } catch {
-    return Response.json({ error: "invalid", message: "Datos incompletos." }, { status: 400 });
+    return Response.json({ error: "invalid", message: "Incomplete data." }, { status: 400 });
   }
   try {
     const result = await registerPasskey(body, { db: getDb(), computeSafeAddress });
@@ -16,6 +16,6 @@ export async function POST(request: Request) {
     return Response.json({ safeAddress: result.safeAddress, name: result.personName });
   } catch (error) {
     console.error("passkey enrollment failed", error);
-    return Response.json({ error: "server", message: "No pudimos guardar tu firma. Probá de nuevo en un rato." }, { status: 500 });
+    return Response.json({ error: "server", message: "We couldn't save your signature. Try again in a bit." }, { status: 500 });
   }
 }

@@ -35,4 +35,4 @@ export async function pageSession(db: Db, token: string | null, purposes: LinkPu
 }
 
 export const NO_PASSKEY_MESSAGE =
-  "Todavía no creaste tu firma en este teléfono. Pedí el link de alta en el chat de la cooperadora.";
+  "You haven't created your signature on this phone yet. Ask for the sign-up link in the co-op chat.";

@@ -23,13 +23,13 @@ it("vendor page: balance, withdraw button and payments", () => {
         address: "0x4444444444444444444444444444444444444444",
         canTransfer: true,
         balance: (BigInt(12500) * E18).toString(),
-        payments: [{ paymentId: "3", amount: (BigInt(12500) * E18).toString(), status: "executed", invoiceLabel: "Factura C 00002-00000345", date: "2026-10-01T12:00:00Z" }],
+        payments: [{ paymentId: "3", amount: (BigInt(12500) * E18).toString(), status: "executed", invoiceLabel: "Invoice C 00002-00000345", date: "2026-10-01T12:00:00Z" }],
       },
     }),
   );
   const t = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
   expect(t).toContain("$ 12.500,00");
-  expect(t).toContain("Pasar a mi cuenta bancaria");
-  expect(t).toContain("Factura C 00002-00000345");
-  expect(t).toContain("Cobrado");
+  expect(t).toContain("Move to my bank account");
+  expect(t).toContain("Invoice C 00002-00000345");
+  expect(t).toContain("Paid");
 });

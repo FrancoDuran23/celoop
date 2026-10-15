@@ -14,7 +14,7 @@ type Props = {
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { period } = await params;
-  return { title: isPeriod(period) ? `Rendición de ${periodLabel(period)}` : "Rendición" };
+  return { title: isPeriod(period) ? `Monthly report · ${periodLabel(period)}` : "Monthly report" };
 }
 
 async function Report({ params, searchParams }: Props) {
@@ -32,7 +32,7 @@ async function Report({ params, searchParams }: Props) {
 
 export default function Page(props: Props) {
   return (
-    <Suspense fallback={<p className="mx-auto max-w-4xl px-4 py-10 text-muted">Cargando la rendición...</p>}>
+    <Suspense fallback={<p className="mx-auto max-w-4xl px-4 py-10 text-muted">Loading the report…</p>}>
       <Report {...props} />
     </Suspense>
   );

@@ -23,7 +23,7 @@ async function Alta({ searchParams }: Props) {
     session = await pageSession(getDb(), token, ["enroll"]);
   } catch (error) {
     console.error(error);
-    return <Problem message="No pudimos cargar la página. Probá de nuevo en un rato." />;
+    return <Problem message="We couldn't load the page. Try again in a bit." />;
   }
   if (!session.ok) return <Problem message={session.message} />;
   const { link, safe } = session;
@@ -31,11 +31,10 @@ async function Alta({ searchParams }: Props) {
   if (safe) {
     return (
       <div className="space-y-4">
-        <PageTitle eyebrow={`Hola, ${link.person.name}`}>Ya tenés tu firma creada</PageTitle>
+        <PageTitle eyebrow={`Hi, ${link.person.name}`}>Your signature is already set up</PageTitle>
         <Card>
-          <p className="text-[15px] text-black/70 dark:text-white/70">
-            Tu número de cuenta en la cooperadora es <span className="font-mono font-medium">{shortAddress(safe)}</span>. No hace falta
-            hacer nada más.
+          <p className="text-[15px] text-muted">
+            Your account number in the co-op is <span className="font-mono font-semibold text-ink">{shortAddress(safe)}</span>. Nothing else to do.
           </p>
         </Card>
       </div>
@@ -44,10 +43,10 @@ async function Alta({ searchParams }: Props) {
 
   return (
     <div className="space-y-5">
-      <PageTitle eyebrow={`Hola, ${link.person.name}`}>Creá tu firma para la cooperadora</PageTitle>
-      <p className="text-[15px] leading-relaxed text-black/75 dark:text-white/75">
-        Vas a crear una firma con la huella, la cara o el PIN de este teléfono. Con ella vas a aprobar los pagos grandes de la
-        cooperadora, sin contraseñas y sin pagar nada.
+      <PageTitle eyebrow={`Hi, ${link.person.name}`}>Create your signature for the co-op</PageTitle>
+      <p className="text-[15px] leading-relaxed text-muted">
+        You’ll create a signature with this phone’s fingerprint, face or PIN. You’ll use it to approve the co-op’s big
+        payments, with no passwords and nothing to pay.
       </p>
       <EnrollPasskey token={token!} name={link.person.name} rpId={env().RP_ID} />
     </div>

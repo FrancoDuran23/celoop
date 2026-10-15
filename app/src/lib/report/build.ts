@@ -5,16 +5,16 @@ import type { Db } from "@/db";
 import { budgetIndex, budgetLines, contributions, cooperadora, invoices, payments, vendors } from "@/db/schema";
 import { executedChanges } from "./changes";
 import {
-  formatComprobante, formatCuit, isPeriod, periodLabel, periodRange, sumBase, tipoLabel,
+  formatComprobante, formatCuit, isPeriod, periodLabel, periodRange, sumBase, invoiceTypeLabel,
 } from "./format";
 import type { ExpenseRow, IncomeConcept, IncomeRow, ReportData } from "./types";
 
 const CONCEPTS: IncomeConcept[] = ["aportes_socios", "sin_identificar", "especie", "trabajo"];
 
 export const SIGNATURE_SLOTS = [
-  { role: "presidente", label: "Presidente/a" },
-  { role: "tesorero", label: "Tesorero/a" },
-  { role: "revisor", label: "Revisor/a de cuentas" },
+  { role: "presidente", label: "President" },
+  { role: "tesorero", label: "Treasurer" },
+  { role: "revisor", label: "Account auditor" },
 ];
 
 function conceptOf(c: { kind: string; personId: number | null }): IncomeConcept {
@@ -82,13 +82,13 @@ export async function buildReport(db: Db, period: string): Promise<ReportData> {
     return {
       paymentId: p.paymentId.toString(),
       date: p.executedAt!.toISOString(),
-      vendor: vendor?.legalName ?? "Proveedor sin registrar",
+      vendor: vendor?.legalName ?? "Unregistered vendor",
       cuit: cuit === null ? null : formatCuit(cuit),
-      comprobanteTipo: tipoLabel(inv?.tipo),
+      comprobanteTipo: invoiceTypeLabel(inv?.tipo),
       comprobanteNumero: formatComprobante(inv?.ptoVta, inv?.nro),
-      concept: typeof extracted.concept === "string" && extracted.concept ? extracted.concept : (line?.name ?? "Sin concepto"),
+      concept: typeof extracted.concept === "string" && extracted.concept ? extracted.concept : (line?.name ?? "No concept"),
       lineSlug: line?.slug ?? "",
-      lineName: line?.name ?? "Sin partida",
+      lineName: line?.name ?? "No budget line",
       amount: p.amount,
       rule: p.rule === "signers" ? "signers" : "auto",
       overBudget: p.overBudget,

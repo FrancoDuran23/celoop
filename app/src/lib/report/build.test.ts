@@ -38,7 +38,7 @@ test("expenses carry the invoice data and flag overruns", async () => {
   expect(r.expenses.rows).toHaveLength(2);
   const [a, b] = r.expenses.rows;
   expect(a).toMatchObject({
-    vendor: "Librería El Aula S.R.L.", cuit: "30-70000000-1", comprobanteTipo: "Factura C",
+    vendor: "Librería El Aula S.R.L.", cuit: "30-70000000-1", comprobanteTipo: "Invoice C",
     comprobanteNumero: "0003-00001234", concept: "Resmas y marcadores", rule: "auto", overBudget: false,
   });
   expect(b).toMatchObject({ rule: "signers", overBudget: true, budgetExpired: true });
@@ -48,7 +48,7 @@ test("expenses carry the invoice data and flag overruns", async () => {
 test("budget changes list signers by role", async () => {
   const r = await buildReport(db, "2026-10");
   expect(r.budgetChanges).toHaveLength(1);
-  expect(r.budgetChanges[0].signers).toEqual(["Presidente", "Tesorero"]);
+  expect(r.budgetChanges[0].signers).toEqual(["President", "Treasurer"]);
   expect(r.budgetChanges[0].reason).toBe("Reparación urgente del techo");
   expect(r.budgetChanges[0].description).toContain("Mantenimiento");
 });

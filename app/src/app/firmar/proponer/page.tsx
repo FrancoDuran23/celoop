@@ -38,7 +38,7 @@ async function load(token: string | null): Promise<Loaded> {
     };
   } catch (error) {
     console.error(error);
-    return { ok: false, message: "No pudimos cargar la página. Probá de nuevo en un rato." };
+    return { ok: false, message: "We couldn't load the page. Try again in a bit." };
   }
 }
 

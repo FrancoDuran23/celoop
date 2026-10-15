@@ -54,7 +54,7 @@ describe("SetBudget", () => {
     const p = built({ kind: "SetBudget", line: MANT, amount: "500.000", periodEnd: "2026-12-31" });
     expect(p.kindIndex).toBe(0);
     expect(decodeProposal(p.kindIndex, p.data)).toEqual({ kind: "SetBudget", lineId: MANT, allocated: BigInt(500000) * E18, periodEnd: periodEndOf("2026-12-31") });
-    expect(p.summary).toBe("Asignar $ 500.000,00 a Mantenimiento, hasta el 31 de diciembre de 2026.");
+    expect(p.summary).toBe("Allocate $ 500.000,00 to Mantenimiento, until December 31, 2026.");
     expect(p.meta).toEqual({});
   });
 
@@ -63,14 +63,14 @@ describe("SetBudget", () => {
     expect(p.meta.newLine).toEqual({ slug: "biblioteca-escolar", name: "Biblioteca Escolar" });
     const decoded = decodeProposal("SetBudget", p.data);
     expect(decoded.kind === "SetBudget" && decoded.lineId).toBe(lineIdOf("biblioteca-escolar"));
-    expect(p.summary).toContain("a Biblioteca Escolar");
+    expect(p.summary).toContain("to Biblioteca Escolar");
   });
 
   it("rejects a new line that already exists, bad amounts and past dates", () => {
-    expect(error({ kind: "SetBudget", line: "new", newName: "Eventos", amount: "1", periodEnd: "2026-12-31" })).toMatch(/Ya existe/);
-    expect(error({ kind: "SetBudget", line: MANT, amount: "0", periodEnd: "2026-12-31" })).toMatch(/monto/);
-    expect(error({ kind: "SetBudget", line: MANT, amount: "10", periodEnd: "2026-01-01" })).toMatch(/futura/);
-    expect(error({ kind: "SetBudget", line: `0x${"99".repeat(32)}`, amount: "10", periodEnd: "2026-12-31" })).toMatch(/partida/);
+    expect(error({ kind: "SetBudget", line: "new", newName: "Eventos", amount: "1", periodEnd: "2026-12-31" })).toMatch(/already exists/);
+    expect(error({ kind: "SetBudget", line: MANT, amount: "0", periodEnd: "2026-12-31" })).toMatch(/amount/);
+    expect(error({ kind: "SetBudget", line: MANT, amount: "10", periodEnd: "2026-01-01" })).toMatch(/future/);
+    expect(error({ kind: "SetBudget", line: `0x${"99".repeat(32)}`, amount: "10", periodEnd: "2026-12-31" })).toMatch(/budget line/);
   });
 });
 
@@ -79,18 +79,18 @@ describe("SetVendor", () => {
     const p = built({ kind: "SetVendor", legalName: "Ferretería El Tornillo SRL", cuit: "30-50001091-2", address: VENDOR.toLowerCase(), enabled: true });
     expect(p.kindIndex).toBe(2);
     expect(decodeProposal("SetVendor", p.data)).toEqual({ kind: "SetVendor", vendor: VENDOR, cuit: BigInt(30500010912), enabled: true });
-    expect(p.summary).toBe("Habilitar al proveedor Ferretería El Tornillo SRL (CUIT 30-50001091-2).");
+    expect(p.summary).toBe("Enable the vendor Ferretería El Tornillo SRL (tax ID 30-50001091-2).");
     expect(p.meta).toEqual({ vendorLegalName: "Ferretería El Tornillo SRL" });
     const off = built({ kind: "SetVendor", legalName: "Ferretería El Tornillo SRL", cuit: "30500010912", address: VENDOR, enabled: false });
-    expect(off.summary).toMatch(/^Dar de baja al proveedor/);
+    expect(off.summary).toMatch(/^Remove the vendor/);
   });
 
   it("rejects a bad CUIT, a missing name or a bad account", () => {
     const base = { kind: "SetVendor" as const, legalName: "Ferretería", cuit: "30500010912", address: VENDOR, enabled: true };
     expect(error({ ...base, cuit: "30500010913" })).toMatch(/CUIT/);
-    expect(error({ ...base, legalName: " " })).toMatch(/razón social/);
-    expect(error({ ...base, address: "0x1234" })).toMatch(/cuenta/);
-    expect(error({ ...base, address: "0x0000000000000000000000000000000000000000" })).toMatch(/cuenta/);
+    expect(error({ ...base, legalName: " " })).toMatch(/legal name/);
+    expect(error({ ...base, address: "0x1234" })).toMatch(/account/);
+    expect(error({ ...base, address: "0x0000000000000000000000000000000000000000" })).toMatch(/account/);
   });
 });
 
@@ -99,21 +99,21 @@ describe("SetCaps", () => {
     const p = built({ kind: "SetCaps", perTxCap: "50.000", vendorMonthlyCap: "200.000" });
     expect(p.kindIndex).toBe(3);
     expect(decodeProposal("SetCaps", p.data)).toEqual({ kind: "SetCaps", perTxCap: BigInt(50000) * E18, vendorMonthlyCap: BigInt(200000) * E18 });
-    expect(p.summary).toContain("hasta $ 50.000,00 por pago y $ 200.000,00 por proveedor");
+    expect(p.summary).toContain("up to $ 50.000,00 per payment and $ 200.000,00 per vendor");
   });
 
   it("rejects empty caps and a monthly cap below the per-payment cap", () => {
-    expect(error({ kind: "SetCaps", perTxCap: "", vendorMonthlyCap: "1" })).toMatch(/por pago/);
-    expect(error({ kind: "SetCaps", perTxCap: "100", vendorMonthlyCap: "50" })).toMatch(/no puede ser menor/);
+    expect(error({ kind: "SetCaps", perTxCap: "", vendorMonthlyCap: "1" })).toMatch(/per payment/);
+    expect(error({ kind: "SetCaps", perTxCap: "100", vendorMonthlyCap: "50" })).toMatch(/can't be lower/);
   });
 });
 
 describe("MoveBudget and Unpause", () => {
   it("still build", () => {
     const move = built({ kind: "MoveBudget", fromLine: EVENTOS, toLine: MANT, amount: "100.000", reason: "rotura de caño" });
-    expect(move.summary).toBe("Mover $ 100.000,00 de Eventos a Mantenimiento. Motivo: rotura de caño");
+    expect(move.summary).toBe("Move $ 100.000,00 from Eventos to Mantenimiento. Reason: rotura de caño");
     expect(move.meta).toEqual({ reasonText: "rotura de caño" });
-    expect(error({ kind: "MoveBudget", fromLine: EVENTOS, toLine: EVENTOS, amount: "1", reason: "x" })).toMatch(/distintas/);
+    expect(error({ kind: "MoveBudget", fromLine: EVENTOS, toLine: EVENTOS, amount: "1", reason: "x" })).toMatch(/different/);
     expect(built({ kind: "Unpause" })).toMatchObject({ kindIndex: 7, data: "0x" });
   });
 });

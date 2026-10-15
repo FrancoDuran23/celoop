@@ -96,11 +96,11 @@ export async function sendSafeCalls(params: SendSafeCallsParams): Promise<SendSa
 export function sendErrorMessage(error: unknown): string {
   const text = error instanceof Error ? `${error.name} ${error.message} ${String((error as { details?: unknown }).details ?? "")}` : String(error);
   if (/NotAllowedError|SignFailed|cancel|abort/i.test(text)) {
-    return "No se pudo confirmar con tu huella o PIN. Probá de nuevo.";
+    return "We couldn't confirm with your fingerprint or PIN. Try again.";
   }
-  if (/Demasiadas operaciones|429/i.test(text)) return "Hiciste muchas operaciones hoy. Probá mañana.";
-  if (/Link inválido/i.test(text)) return "El link venció o ya se usó. Pedí uno nuevo en el chat.";
-  if (/Operación no permitida|403/i.test(text)) return "Esta operación no está permitida desde esta página.";
-  if (/timeout|timed out/i.test(text)) return "La operación está tardando más de lo normal. Revisá en unos minutos si quedó registrada.";
-  return "No se pudo completar la operación. Probá de nuevo en un rato.";
+  if (/Demasiadas operaciones|429/i.test(text)) return "You've done a lot of operations today. Try tomorrow.";
+  if (/Link inválido/i.test(text)) return "The link expired or was already used. Ask for a new one in the chat.";
+  if (/Operación no permitida|403/i.test(text)) return "This operation isn't allowed from this page.";
+  if (/timeout|timed out/i.test(text)) return "The operation is taking longer than usual. Check in a few minutes whether it was recorded.";
+  return "The operation couldn't be completed. Try again in a bit.";
 }

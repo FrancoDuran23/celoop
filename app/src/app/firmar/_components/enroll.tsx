@@ -16,12 +16,12 @@ export function EnrollPasskey({ token, name, rpId, onDone }: { token: string; na
     let credential;
     try {
       credential = await createWebAuthnCredential({
-        name: `${name} · Cooperadora`,
+        name: `${name} · ${APP_NAME}`,
         rp: { id: rpId, name: APP_NAME },
       });
     } catch (error) {
       console.error(error);
-      setState({ status: "error", message: "No se pudo crear la firma. Probá de nuevo y confirmá con tu huella, tu cara o tu PIN." });
+      setState({ status: "error", message: "We couldn't create your signature. Try again and confirm with your fingerprint, face or PIN." });
       return;
     }
     try {
@@ -32,23 +32,23 @@ export function EnrollPasskey({ token, name, rpId, onDone }: { token: string; na
       });
       const body = (await res.json()) as { safeAddress?: string; message?: string };
       if (!res.ok || !body.safeAddress) {
-        setState({ status: "error", message: body.message ?? "No pudimos guardar tu firma. Probá de nuevo en un rato." });
+        setState({ status: "error", message: body.message ?? "We couldn't save your signature. Try again in a bit." });
         return;
       }
       setState({ status: "done", safe: body.safeAddress });
       onDone?.();
     } catch {
-      setState({ status: "error", message: "No hay conexión. Revisá internet y probá de nuevo." });
+      setState({ status: "error", message: "No connection. Check your internet and try again." });
     }
   };
 
   if (state.status === "done") {
     return (
       <Card className="space-y-2">
-        <p className="text-lg font-semibold">Listo. Tu firma quedó creada.</p>
-        <p className="text-[15px] text-black/70 dark:text-white/70">
-          Tu número de cuenta en la cooperadora es <span className="font-mono font-medium">{shortAddress(state.safe)}</span>.
-          La comisión te va a sumar como firmante y te vamos a avisar por el chat.
+        <p className="text-lg font-extrabold">Done. Your signature is ready.</p>
+        <p className="text-[15px] text-muted">
+          Your account number in the co-op is <span className="font-mono font-semibold text-ink">{shortAddress(state.safe)}</span>.
+          The board will add you as a signer and we’ll let you know in the chat.
         </p>
       </Card>
     );
@@ -57,7 +57,7 @@ export function EnrollPasskey({ token, name, rpId, onDone }: { token: string; na
   return (
     <div className="space-y-4">
       <Button onClick={create} disabled={state.status === "working"}>
-        {state.status === "working" ? "Esperando tu huella…" : "Crear mi firma"}
+        {state.status === "working" ? "Waiting for your fingerprint…" : "Create my signature"}
       </Button>
       {state.status === "error" ? <Notice tone="error">{state.message}</Notice> : null}
     </div>

@@ -38,7 +38,7 @@ const base = (appUrl: string) => appUrl.replace(/\/+$/, "");
 const q = (token: string) => encodeURIComponent(token);
 
 export const urls = {
-  panel: (appUrl: string) => `${base(appUrl)}/`,
+  panel: (appUrl: string) => `${base(appUrl)}/ledger`,
   enroll: (appUrl: string, token: string) => `${base(appUrl)}/firmar/alta?t=${q(token)}`,
   payment: (appUrl: string, paymentId: bigint | string, token: string) =>
     `${base(appUrl)}/firmar/pago/${paymentId}?t=${q(token)}`,

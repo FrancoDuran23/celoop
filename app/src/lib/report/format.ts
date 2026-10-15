@@ -10,6 +10,11 @@ export const MONTHS_ES = [
   "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
 ];
 
+export const MONTHS_EN = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
 function toBig(v: string | bigint | number | null | undefined): bigint {
   if (v === null || v === undefined || v === "") return BigInt(0);
   if (typeof v === "bigint") return v;
@@ -68,7 +73,14 @@ export function periodRange(period: string): { start: Date; end: Date } {
   return { start, end };
 }
 
+/** "October 2026", for the web and the PDF. */
 export function periodLabel(period: string): string {
+  const [y, m] = period.split("-").map(Number);
+  return `${MONTHS_EN[m - 1]} ${y}`;
+}
+
+/** "octubre de 2026", for the Telegram bot, which speaks Spanish. */
+export function periodLabelEs(period: string): string {
   const [y, m] = period.split("-").map(Number);
   return `${MONTHS_ES[m - 1]} de ${y}`;
 }
@@ -91,9 +103,22 @@ const TIPOS: Record<number, string> = {
   13: "Nota de crédito C", 51: "Factura M",
 };
 
+/** Spanish name of an ARCA voucher type, for the Telegram bot. */
 export function tipoLabel(tipo: number | null | undefined): string {
   if (tipo === null || tipo === undefined) return "Comprobante";
   return TIPOS[tipo] ?? `Comprobante ${tipo}`;
+}
+
+const INVOICE_TYPES: Record<number, string> = {
+  1: "Invoice A", 2: "Debit note A", 3: "Credit note A", 6: "Invoice B",
+  7: "Debit note B", 8: "Credit note B", 11: "Invoice C", 12: "Debit note C",
+  13: "Credit note C", 51: "Invoice M",
+};
+
+/** English name of an ARCA voucher type, for the web and the PDF. The letter is the official class. */
+export function invoiceTypeLabel(tipo: number | null | undefined): string {
+  if (tipo === null || tipo === undefined) return "Voucher";
+  return INVOICE_TYPES[tipo] ?? `Voucher ${tipo}`;
 }
 
 /** "0001-00001234" */

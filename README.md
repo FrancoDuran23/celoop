@@ -1,6 +1,6 @@
-# Cooperadora Segura
+# Minga
 
-Agente tesorero para cooperadoras escolares argentinas, sobre Celo y con wARS. El diseño está en [`docs/sdd.md`](docs/sdd.md) y las specs por módulo en [`docs/specs/`](docs/specs/README.md).
+Antes "Cooperadora Segura". Agente tesorero para cooperadoras escolares argentinas, sobre Celo y con wARS. El diseño está en [`docs/sdd.md`](docs/sdd.md) y las specs por módulo en [`docs/specs/`](docs/specs/README.md).
 
 - `contracts/`: contratos en Solidity con Foundry (`TreasuryPolicy`, `BoxFactory`, `DepositBox`).
 - `app/`: Next.js con el bot de Telegram, el orquestador, la página de firma, el panel y la rendición.

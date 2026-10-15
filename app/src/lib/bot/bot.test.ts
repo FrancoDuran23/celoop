@@ -96,7 +96,7 @@ describe("menus", () => {
     await s.bot.handleUpdate(updates.text(1001, "¿En qué se gastó?"));
     const msg = s.tg.to(s.people.socia.id).at(-1)!.text;
     expect(msg).toContain("Materiales: se usaron $ 10.000,00 de $ 50.000,00");
-    expect(msg).toContain("https://coop.test/");
+    expect(msg).toContain("https://coop.test/ledger");
   });
 
   test("Proponer cambio sends a sign link to /firmar/proponer", async () => {

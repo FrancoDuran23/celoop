@@ -135,16 +135,16 @@ function parseTarget(raw: unknown): LinkTarget {
 export function linkErrorMessage(error: LinkError): string {
   switch (error) {
     case "not_found":
-      return "Este link no es válido. Revisá que esté completo o pedí uno nuevo en el chat de la cooperadora.";
+      return "This link isn't valid. Check it's complete or ask for a new one in the co-op chat.";
     case "expired":
-      return "Este link venció. Pedí uno nuevo en el chat de la cooperadora.";
+      return "This link has expired. Ask for a new one in the co-op chat.";
     case "used":
-      return "Este link ya se usó. Si tenés que firmar otra vez, pedí uno nuevo en el chat.";
+      return "This link was already used. If you need to sign again, ask for a new one in the chat.";
     case "wrong_purpose":
-      return "Este link no sirve para esta página.";
+      return "This link doesn't work for this page.";
     case "wrong_target":
-      return "Este link es para otra operación. Abrí el link que te mandamos para esta.";
+      return "This link is for another operation. Open the link we sent you for this one.";
     case "wrong_person":
-      return "Este link es de otra persona. Pedí el tuyo en el chat de la cooperadora.";
+      return "This link belongs to someone else. Ask for yours in the co-op chat.";
   }
 }

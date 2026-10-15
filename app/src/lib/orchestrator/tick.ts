@@ -5,7 +5,7 @@ import { and, eq, gt, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import type { Address, Hex } from "viem";
 import { agentTxs, budgetIndex, budgetLines, contributionIntents, contributions, cooperadora, reports } from "@/db/schema";
 import { withLock } from "@/lib/locks";
-import { explorerTxUrl, formatDate, periodLabel, periodRange, previousPeriod } from "@/lib/report/format";
+import { explorerTxUrl, formatDate, periodLabelEs, periodRange, previousPeriod } from "@/lib/report/format";
 import { notifyOnce, type AgentDeps } from "./deps";
 import { claimNotice, releaseNotice } from "./chat-state";
 import { arDate, errorText, formatPesos } from "./format";
@@ -223,7 +223,7 @@ export async function closeMonth(deps: AgentDeps): Promise<{ period: string; clo
     for (const r of await personsWithRoles(db, [REVIEWER_ROLE])) {
       const sent = await notifyOnce(deps, r.id, `review:${period}`, async () => ({
         text:
-          `Ya está el borrador de la rendición de ${periodLabel(period)}. ` +
+          `Ya está el borrador de la rendición de ${periodLabelEs(period)}. ` +
           `Revisalo con tiempo y, si está todo bien, dale el visto bueno desde la misma página. El link vence en 7 días.`,
         buttons: [[{ text: "Revisar rendición", url: await reviewUrl(db, deps.appUrl, r.id, period, now) }]],
       }));
@@ -247,7 +247,7 @@ export async function publishReviewed(deps: AgentDeps): Promise<{ published: str
         deps,
         p.id,
         `published:${row.period}`,
-        `Ya está publicada la rendición de ${periodLabel(row.period)}, con el visto bueno del revisor. La puede ver cualquiera: ${urls.report(deps.appUrl, row.period)}`,
+        `Ya está publicada la rendición de ${periodLabelEs(row.period)}, con el visto bueno del revisor. La puede ver cualquiera: ${urls.report(deps.appUrl, row.period)}`,
       );
     }
   }

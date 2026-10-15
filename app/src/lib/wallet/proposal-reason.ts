@@ -36,19 +36,19 @@ type Deps = { db: Db; chain: Pick<ChainReader, "receipt">; treasury: Address; no
 
 export async function recordProposal(input: unknown, deps: Deps): Promise<ReasonResult> {
   const parsed = proposalMetaSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, message: "Faltan datos." };
+  if (!parsed.success) return { ok: false, message: "some details are missing." };
   const { token, txHash, reasonText, newLine, vendorLegalName } = parsed.data;
 
   // The link was consumed when the proposal was sent, so a used link is fine here.
   const resolved = await resolveSignLink(deps.db, token, { purposes: ["sign"], now: deps.now, allowUsed: true });
-  if (!resolved.ok) return { ok: false, message: "El link no es válido." };
+  if (!resolved.ok) return { ok: false, message: "the link isn't valid." };
   const link = resolved.link;
 
   const receipt = await deps.chain.receipt(txHash as Hex);
   const event = parseEventLogs({ abi: treasuryPolicyAbi, eventName: "ProposalCreated", logs: receipt.logs }).find(
     (e) => isAddressEqual(e.address, deps.treasury) && linkOwnsSafe(link, e.args.proposer),
   );
-  if (!event) return { ok: false, message: "No encontramos la propuesta en esa operación." };
+  if (!event) return { ok: false, message: "we couldn't find the proposal in that operation." };
 
   const kind = proposalKindName(event.args.kind);
   const decoded = decodeProposal(kind, event.args.data);
@@ -57,13 +57,13 @@ export async function recordProposal(input: unknown, deps: Deps): Promise<Reason
 
   if (decoded.kind === "MoveBudget") {
     if (!reasonText || decoded.reasonHash !== reasonHash(reasonText)) {
-      return { ok: false, message: "El motivo no coincide con el de la propuesta." };
+      return { ok: false, message: "the reason doesn't match the proposal." };
     }
     motive = reasonText;
   }
   if (newLine) {
     if (decoded.kind !== "SetBudget" || lineIdOf(newLine.slug).toLowerCase() !== decoded.lineId.toLowerCase()) {
-      return { ok: false, message: "La partida nueva no coincide con la propuesta." };
+      return { ok: false, message: "the new line doesn't match the proposal." };
     }
     meta.newLine = newLine;
     await deps.db
@@ -72,7 +72,7 @@ export async function recordProposal(input: unknown, deps: Deps): Promise<Reason
       .onConflictDoNothing();
   }
   if (vendorLegalName) {
-    if (decoded.kind !== "SetVendor") return { ok: false, message: "La razón social no corresponde a esta propuesta." };
+    if (decoded.kind !== "SetVendor") return { ok: false, message: "the legal name doesn't belong to this proposal." };
     meta.vendorLegalName = vendorLegalName;
   }
 

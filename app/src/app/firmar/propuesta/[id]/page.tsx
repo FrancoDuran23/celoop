@@ -15,7 +15,7 @@ type Props = {
 
 export default function ProposalPage(props: Props) {
   return (
-    <Suspense fallback={<Loading label="Buscando la propuesta…" />}>
+    <Suspense fallback={<Loading label="Finding the proposal…" />}>
       <Proposal {...props} />
     </Suspense>
   );
@@ -24,7 +24,7 @@ export default function ProposalPage(props: Props) {
 type Loaded = { ok: true; props: Parameters<typeof ProposalSigner>[0] } | { ok: false; message: string };
 
 async function load(id: string, token: string | null): Promise<Loaded> {
-  if (!/^\d{1,20}$/.test(id)) return { ok: false, message: "No encontramos esta propuesta." };
+  if (!/^\d{1,20}$/.test(id)) return { ok: false, message: "We couldn't find this proposal." };
   const proposalId = BigInt(id);
   try {
     const db = getDb();
@@ -33,7 +33,7 @@ async function load(id: string, token: string | null): Promise<Loaded> {
     if (!linkAllows(session.link, "proposal", proposalId)) return { ok: false, message: linkErrorMessage("wrong_target") };
     if (!session.credential || !session.safe) return { ok: false, message: NO_PASSKEY_MESSAGE };
     const [view, config] = await Promise.all([loadProposalView(db, chainReader, proposalId, session.safe), pageChainConfig()]);
-    if (!view) return { ok: false, message: "No encontramos esta propuesta. Puede que el link sea viejo." };
+    if (!view) return { ok: false, message: "We couldn't find this proposal. The link may be old." };
     // Idempotent: makes sure an executed SetVendor is mirrored in vendors.
     if (view.status === "executed") await applyExecutedProposal(db, chainReader, proposalId).catch(console.error);
     return {
@@ -47,7 +47,7 @@ async function load(id: string, token: string | null): Promise<Loaded> {
     };
   } catch (error) {
     console.error(error);
-    return { ok: false, message: "No pudimos cargar la propuesta. Probá de nuevo en un rato." };
+    return { ok: false, message: "We couldn't load the proposal. Try again in a bit." };
   }
 }
 

@@ -31,7 +31,7 @@ export type EnrollDeps = {
  */
 export async function registerPasskey(input: unknown, deps: EnrollDeps): Promise<EnrollResult> {
   const parsed = enrollRequestSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, status: 400, error: "invalid", message: "Datos incompletos." };
+  if (!parsed.success) return { ok: false, status: 400, error: "invalid", message: "Incomplete data." };
   const { token, credentialId } = parsed.data;
   const publicKey = normalizePublicKey(parsed.data.publicKey as Hex);
 
@@ -44,7 +44,7 @@ export async function registerPasskey(input: unknown, deps: EnrollDeps): Promise
   const existing = await deps.db.select().from(passkeys).where(eq(passkeys.credentialId, credentialId)).limit(1);
   if (existing[0]) {
     if (existing[0].personId !== person.id) {
-      return { ok: false, status: 409, error: "credential_taken", message: "Esa firma ya está registrada a nombre de otra persona." };
+      return { ok: false, status: 409, error: "credential_taken", message: "That signature is already registered to someone else." };
     }
     return { ok: true, safeAddress: getAddress(existing[0].safeAddress), personName: person.name };
   }
@@ -58,7 +58,7 @@ export async function registerPasskey(input: unknown, deps: EnrollDeps): Promise
       ok: false,
       status: 409,
       error: "already_enrolled",
-      message: "Ya tenés una firma creada en otro dispositivo. Si lo perdiste, avisale a la comisión.",
+      message: "You already created a signature on another device. If you lost it, let the board know.",
     };
   }
 

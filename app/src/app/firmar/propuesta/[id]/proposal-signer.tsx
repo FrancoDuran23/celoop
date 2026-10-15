@@ -22,32 +22,32 @@ export function ProposalSigner({ view, treasury, signer, name }: { view: Proposa
 
   return (
     <div className="space-y-4">
-      <PageTitle eyebrow={`Hola, ${name}`}>Cambio propuesto</PageTitle>
+      <PageTitle eyebrow={`Hi, ${name}`}>Proposed change</PageTitle>
 
       <Card>
-        <p className="text-lg leading-snug font-medium text-pretty">{view.summary}</p>
+        <p className="text-lg leading-snug font-bold text-pretty">{view.summary}</p>
         <dl className="mt-3">
-          <Row label="Firmas">
+          <Row label="Signatures">
             <SignatureCount approvals={view.approvals} threshold={view.threshold} />
           </Row>
         </dl>
       </Card>
 
       {view.reasonMatches === false ? (
-        <Notice tone="warn">Ojo: el motivo guardado no coincide con el que quedó registrado en la propuesta. Consultá antes de firmar.</Notice>
+        <Notice tone="warn">Heads up: the saved reason doesn’t match what was recorded in the proposal. Ask before signing.</Notice>
       ) : null}
-      {view.paused && view.kind !== "Unpause" ? <Notice tone="warn">Los pagos están pausados en este momento.</Notice> : null}
+      {view.paused && view.kind !== "Unpause" ? <Notice tone="warn">Payments are paused right now.</Notice> : null}
 
       {!open ? (
-        <Notice tone="ok">Esta propuesta ya se aplicó. No hace falta que firmes.</Notice>
+        <Notice tone="ok">This proposal was already applied. No need to sign.</Notice>
       ) : state.status === "done" ? null : view.alreadyApproved ? (
-        <Notice tone="ok">Ya firmaste esta propuesta.</Notice>
+        <Notice tone="ok">You already signed this proposal.</Notice>
       ) : (
         <Button onClick={() => void approve()} disabled={busy}>
-          {busy ? "Firmando…" : "Aprobar"}
+          {busy ? "Signing…" : "Approve"}
         </Button>
       )}
-      <ActionStatus state={state} doneText="Listo. Aprobaste la propuesta." />
+      <ActionStatus state={state} doneText="Done. You approved the proposal." />
 
       {!view.paused && state.status !== "working" ? (
         <div className="pt-4">

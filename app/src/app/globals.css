@@ -1,59 +1,266 @@
 @import "tailwindcss";
 
-/* Sober, high-contrast palette: a public ledger, not a crypto app. */
+/* Wide but short screens (13" laptops): desktop layout, tighter type so cards never fill the screen. */
+@custom-variant short (@media (min-width: 40rem) and (max-height: 820px));
+
+/*
+  Minga palette: primary blue, red and yellow on paper, drawn with thick black ink.
+  Playful like the illustration, but still a public ledger: numbers stay tabular and
+  every tone has a text colour that passes AA on its background.
+*/
 :root {
-  --background: #f4f3ef;
-  --foreground: #1f2933;
+  color-scheme: light;
+
+  --paper: #fbfaf5;
   --surface: #ffffff;
-  --muted: #52606d;
-  --line: #d3d8de;
-  --accent: #1c4a7a;
-  --danger: #b42318;
-  --danger-soft: #fdecea;
-  --warn: #8a5a00;
-  --warn-soft: #fff4d6;
-  --ok: #1d6b3a;
-  --ok-soft: #e4f4ea;
+  --ink: #141414;
+  --muted: #5b5b57;
+  --line: #d9d7cf;
+
+  --blue: #2f7de1;
+  --blue-ink: #1b5cb4;
+  --blue-soft: #e3eefc;
+
+  --red: #e53b2c;
+  --red-ink: #b8291c;
+  --red-soft: #fde4e0;
+
+  --yellow: #f7d21b;
+  --yellow-ink: #6b5600;
+  --yellow-soft: #fff4b8;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-paper: var(--paper);
   --color-surface: var(--surface);
+  --color-ink: var(--ink);
   --color-muted: var(--muted);
   --color-line: var(--line);
-  --color-accent: var(--accent);
-  --color-danger: var(--danger);
-  --color-danger-soft: var(--danger-soft);
-  --color-warn: var(--warn);
-  --color-warn-soft: var(--warn-soft);
-  --color-ok: var(--ok);
-  --color-ok-soft: var(--ok-soft);
-  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --color-blue: var(--blue);
+  --color-blue-ink: var(--blue-ink);
+  --color-blue-soft: var(--blue-soft);
+  --color-red: var(--red);
+  --color-red-ink: var(--red-ink);
+  --color-red-soft: var(--red-soft);
+  --color-yellow: var(--yellow);
+  --color-yellow-ink: var(--yellow-ink);
+  --color-yellow-soft: var(--yellow-soft);
+
+  --font-sans: var(--font-nunito, "Nunito"), ui-rounded, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  --shadow-hard: 4px 4px 0 0 var(--ink);
+  --shadow-hard-sm: 3px 3px 0 0 var(--ink);
+  --shadow-hard-xs: 2px 2px 0 0 var(--ink);
 }
 
-html {
-  -webkit-text-size-adjust: 100%;
+/* Element defaults live in the base layer so Tailwind utilities can override them. */
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    background: var(--paper);
+    /* Flying puzzle pieces must never widen the page. */
+    overflow-x: clip;
+  }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 16px;
+    line-height: 1.5;
+  }
+
+  a {
+    color: var(--blue-ink);
+    text-decoration: underline;
+    text-decoration-thickness: 2px;
+    text-underline-offset: 3px;
+  }
+
+  a:hover {
+    color: var(--ink);
+  }
+
+  :focus-visible {
+    outline: 3px solid var(--blue);
+    outline-offset: 3px;
+  }
+
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-sans);
-  font-size: 16px;
-  line-height: 1.5;
+/* Hand-drawn puzzle pattern for the home band. Subtle on purpose. */
+.minga-band {
+  background-color: var(--blue);
+  background-image:
+    radial-gradient(circle at 12% 30%, rgb(255 255 255 / 0.14) 0 18px, transparent 19px),
+    radial-gradient(circle at 88% 70%, rgb(255 255 255 / 0.12) 0 26px, transparent 27px),
+    radial-gradient(circle at 70% 15%, rgb(255 255 255 / 0.1) 0 12px, transparent 13px);
 }
 
-a {
-  color: var(--accent);
-  text-underline-offset: 2px;
+@media (prefers-reduced-motion: no-preference) {
+  .press {
+    transition: transform 120ms ease, box-shadow 120ms ease;
+  }
+  .press:active:not(:disabled) {
+    transform: translate(2px, 2px);
+    box-shadow: 1px 1px 0 0 var(--ink);
+  }
 }
 
-:focus-visible {
-  outline: 3px solid var(--accent);
-  outline-offset: 2px;
+/* "Scroll to learn more" pill under the opening picture. */
+.scroll-hint {
+  position: fixed;
+  left: 50%;
+  bottom: max(24px, env(safe-area-inset-bottom));
+  z-index: 10;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  white-space: nowrap;
+  padding: 0.6rem 1.1rem;
+  border: 3px solid var(--ink);
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: var(--shadow-hard-sm);
+  font-size: 0.875rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+  transition: opacity 200ms ease, transform 200ms ease;
+}
+.scroll-hint.is-gone {
+  opacity: 0;
+  transform: translate(-50%, 12px);
 }
 
-.num {
-  font-variant-numeric: tabular-nums;
+/* The watching robots beside the cards. */
+.watcher {
+  pointer-events: auto;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .scroll-hint-arrow {
+    display: inline-block;
+    animation: hint-bounce 1.2s ease-in-out infinite;
+  }
+  @keyframes hint-bounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(4px); }
+  }
+
+  .watcher-bob {
+    animation: watcher-float 4.5s ease-in-out infinite;
+    animation-delay: var(--delay, 0s);
+  }
+  @keyframes watcher-float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-6px); }
+  }
+  .watcher-lids {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: watcher-blink 5.5s infinite;
+    animation-delay: calc(var(--delay, 0s) * 1.7);
+  }
+  @keyframes watcher-blink {
+    0%, 94%, 100% { transform: scaleY(1); }
+    96% { transform: scaleY(0.1); }
+  }
+  /* The antenna wiggles when the pointer arrives. */
+  .watcher.is-happy .watcher-antenna {
+    transform-origin: 75px 27px;
+    animation: watcher-antenna 0.3s ease-in-out infinite alternate;
+  }
+  @keyframes watcher-antenna {
+    from { transform: rotate(-12deg); }
+    to { transform: rotate(12deg); }
+  }
+  /* The magnifier: a slow look-around, faster on hover. */
+  .watcher-magnifier .watcher-tool {
+    transform-origin: 130px 98px;
+    animation: watcher-scan 3.2s ease-in-out infinite;
+  }
+  @keyframes watcher-scan {
+    0%, 100% { transform: rotate(0deg); }
+    50% { transform: rotate(-9deg); }
+  }
+  .watcher.is-happy .watcher-tool {
+    animation-duration: 1.2s;
+  }
+}
+
+/* Live demo: message pop-in, typing dots, value flash, the ledger's live dot, the slider. */
+@media (prefers-reduced-motion: no-preference) {
+  .demo-in {
+    animation: demo-in 220ms ease-out both;
+  }
+  @keyframes demo-in {
+    from { opacity: 0; transform: translateY(6px) scale(0.98); }
+    to { opacity: 1; transform: none; }
+  }
+  .demo-flash {
+    animation: demo-flash 900ms ease-out;
+  }
+  @keyframes demo-flash {
+    0% { background-color: var(--yellow-soft); }
+    100% { background-color: transparent; }
+  }
+  .demo-live {
+    animation: demo-live 1.6s ease-in-out infinite;
+  }
+  @keyframes demo-live {
+    50% { opacity: 0.25; }
+  }
+  .demo-dots i {
+    animation: demo-dot 1s ease-in-out infinite;
+  }
+  .demo-dots i:nth-child(2) { animation-delay: 0.15s; }
+  .demo-dots i:nth-child(3) { animation-delay: 0.3s; }
+  @keyframes demo-dot {
+    0%, 100% { opacity: 0.3; transform: translateY(0); }
+    50% { opacity: 1; transform: translateY(-2px); }
+  }
+}
+
+.demo-dots {
+  display: inline-flex;
+  gap: 4px;
+}
+.demo-dots i {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--ink);
+}
+
+.demo-range {
+  appearance: none;
+  height: 12px;
+  border: 2px solid var(--ink);
+  border-radius: 999px;
+  background: var(--blue-soft);
+  cursor: pointer;
+}
+.demo-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 26px;
+  height: 26px;
+  border: 3px solid var(--ink);
+  border-radius: 999px;
+  background: var(--yellow);
+  box-shadow: 2px 2px 0 0 var(--ink);
+}
+.demo-range::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border: 3px solid var(--ink);
+  border-radius: 999px;
+  background: var(--yellow);
+  box-shadow: 2px 2px 0 0 var(--ink);
 }

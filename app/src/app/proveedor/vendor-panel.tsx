@@ -7,7 +7,7 @@ import { ripioOfframpUrl } from "@/lib/wallet/ripio";
 import type { VendorView } from "@/lib/wallet/views";
 import { ActionStatus } from "../firmar/_components/action-status";
 import { EnrollPasskey } from "../firmar/_components/enroll";
-import { Button, Card, Notice, PageTitle } from "../firmar/_components/ui";
+import { Button, Card, Notice, PageTitle, field } from "../firmar/_components/ui";
 import { useSafeAction, type SignerConfig } from "../firmar/_components/use-safe-action";
 
 export function VendorEnroll(props: { token: string; name: string; rpId: string }) {
@@ -15,13 +15,10 @@ export function VendorEnroll(props: { token: string; name: string; rpId: string 
   return <EnrollPasskey {...props} onDone={() => setTimeout(() => router.refresh(), 1500)} />;
 }
 
-const STATUS: Record<string, string> = { executed: "Cobrado", pending: "Esperando firmas", rejected: "Rechazado" };
-
-const field =
-  "mt-1 block min-h-12 w-full rounded-xl border border-black/15 bg-white px-3 text-base dark:border-white/20 dark:bg-white/5";
+const STATUS: Record<string, string> = { executed: "Paid", pending: "Waiting for signatures", rejected: "Rejected" };
 
 const formatDate = (iso: string) =>
-  new Date(iso).toLocaleDateString("es-AR", { day: "numeric", month: "short", timeZone: "America/Argentina/Buenos_Aires" });
+  new Date(iso).toLocaleDateString("en-US", { day: "numeric", month: "short", timeZone: "America/Argentina/Buenos_Aires" });
 
 export function VendorPanel({ view, wars, name, signer }: { view: VendorView; wars: Address; name: string; signer: SignerConfig }) {
   const { state, run } = useSafeAction(signer);
@@ -45,32 +42,32 @@ export function VendorPanel({ view, wars, name, signer }: { view: VendorView; wa
 
   return (
     <div className="space-y-5">
-      <PageTitle eyebrow={`Hola, ${name}`}>{view.legalName}</PageTitle>
+      <PageTitle eyebrow={`Hi, ${name}`}>{view.legalName}</PageTitle>
 
-      <Card>
-        <p className="text-sm text-black/60 dark:text-white/60">Tenés para retirar</p>
-        <p className="mt-0.5 text-3xl font-semibold tabular-nums tracking-tight">{formatPesos(balance)}</p>
+      <Card className="bg-yellow">
+        <p className="text-sm font-bold">Available to withdraw</p>
+        <p className="mt-0.5 text-3xl font-black tabular-nums tracking-tight">{formatPesos(balance)}</p>
       </Card>
 
       {state.status === "done" ? (
-        <ActionStatus state={state} doneText={`Listo. Enviaste ${formatPesos(amount ?? BigInt(0))} a Ripio. En unos minutos te llega a tu cuenta.`} />
+        <ActionStatus state={state} doneText={`Done. You sent ${formatPesos(amount ?? BigInt(0))} to Ripio. It reaches your bank account in a few minutes.`} />
       ) : balance === BigInt(0) ? (
-        <Notice>Cuando la cooperadora te pague, el dinero va a aparecer acá.</Notice>
+        <Notice>When the co-op pays you, the money shows up here.</Notice>
       ) : step === "start" ? (
         <div className="space-y-2">
-          <Button onClick={openRipio}>Pasar a mi cuenta bancaria</Button>
-          <p className="text-center text-sm text-black/60 dark:text-white/60">Se abre Ripio para que elijas tu cuenta.</p>
+          <Button onClick={openRipio}>Move to my bank account</Button>
+          <p className="text-center text-sm text-muted">Ripio opens so you can pick your account.</p>
           {!view.canTransfer ? (
-            <Notice tone="info">Tus cobros llegan a otra cuenta, no a la firma de este teléfono. Retiralos desde ahí.</Notice>
+            <Notice tone="info">Your payments go to another account, not this phone’s signature. Withdraw them from there.</Notice>
           ) : null}
         </div>
       ) : step === "address" ? (
         <Card className="space-y-4">
           <p className="text-[15px] leading-relaxed">
-            En Ripio seguí los pasos hasta que te muestre una <strong>dirección para depositar</strong>. Copiala y pegala acá.
+            In Ripio, follow the steps until it shows you a <strong>deposit address</strong>. Copy it and paste it here.
           </p>
-          <label className="block text-sm font-medium">
-            Dirección que te dio Ripio
+          <label className="block text-sm font-bold">
+            Address Ripio gave you
             <input
               className={`${field} font-mono text-sm`}
               autoComplete="off"
@@ -81,8 +78,8 @@ export function VendorPanel({ view, wars, name, signer }: { view: VendorView; wa
               onChange={(e) => setDestination(e.target.value)}
             />
           </label>
-          <label className="block text-sm font-medium">
-            Monto en pesos
+          <label className="block text-sm font-bold">
+            Amount in pesos
             <input
               className={field}
               inputMode="decimal"
@@ -90,50 +87,50 @@ export function VendorPanel({ view, wars, name, signer }: { view: VendorView; wa
               value={amountText}
               onChange={(e) => setAmountText(e.target.value)}
             />
-            <span className="mt-1 block text-sm font-normal text-black/60 dark:text-white/60">Si lo dejás vacío, se envía todo.</span>
+            <span className="mt-1 block text-sm font-normal text-muted">Leave it empty to send everything.</span>
           </label>
-          {destination && !validAddress ? <Notice tone="warn">Esa dirección no parece completa. Copiala de nuevo desde Ripio.</Notice> : null}
-          {amountText && !amountOk ? <Notice tone="warn">El monto tiene que ser mayor a cero y no más de {formatPesos(balance)}.</Notice> : null}
+          {destination && !validAddress ? <Notice tone="warn">That address doesn’t look complete. Copy it again from Ripio.</Notice> : null}
+          {amountText && !amountOk ? <Notice tone="warn">The amount has to be more than zero and no more than {formatPesos(balance)}.</Notice> : null}
           <Button onClick={() => setStep("confirm")} disabled={!validAddress || !amountOk}>
-            Revisar
+            Review
           </Button>
           <Button variant="secondary" onClick={openRipio}>
-            Volver a abrir Ripio
+            Open Ripio again
           </Button>
         </Card>
       ) : (
         <Card className="space-y-3">
-          <p className="font-semibold">¿Enviar {formatPesos(amount!)} a Ripio?</p>
-          <p className="text-[15px] text-black/70 dark:text-white/70">
-            Van a la dirección <span className="font-mono">{shortAddress(destination.trim())}</span>. Revisá que sea la misma que te
-            muestra Ripio: si está mal, el dinero no se puede recuperar.
+          <p className="font-extrabold">Send {formatPesos(amount!)} to Ripio?</p>
+          <p className="text-[15px] text-muted">
+            It goes to <span className="font-mono text-ink">{shortAddress(destination.trim())}</span>. Check it’s the same one Ripio shows
+            you: if it’s wrong, the money can’t be recovered.
           </p>
           <Button onClick={send} disabled={state.status === "working"}>
-            {state.status === "working" ? "Enviando…" : "Confirmar con mi huella"}
+            {state.status === "working" ? "Sending…" : "Confirm with my fingerprint"}
           </Button>
           <Button variant="secondary" onClick={() => setStep("address")} disabled={state.status === "working"}>
-            Cambiar algo
+            Change something
           </Button>
         </Card>
       )}
       {state.status !== "done" ? <ActionStatus state={state} doneText="" /> : null}
 
       <section>
-        <h2 className="mb-2 text-lg font-semibold">Tus cobros</h2>
+        <h2 className="mb-2 text-lg font-extrabold">Your payments</h2>
         {view.payments.length === 0 ? (
-          <p className="text-[15px] text-black/60 dark:text-white/60">Todavía no hay cobros.</p>
+          <p className="text-[15px] text-muted">No payments yet.</p>
         ) : (
-          <ul className="divide-y divide-black/5 rounded-2xl border border-black/10 dark:divide-white/10 dark:border-white/15">
+          <ul className="divide-y-2 divide-line rounded-2xl border-[3px] border-ink bg-surface shadow-hard-sm">
             {view.payments.map((p) => (
               <li key={p.paymentId} className="flex items-center justify-between gap-3 px-4 py-3">
                 <div className="min-w-0">
-                  <p className="truncate font-medium">{p.invoiceLabel ?? `Pago ${p.paymentId}`}</p>
-                  <p className="text-sm text-black/60 dark:text-white/60">
+                  <p className="truncate font-bold">{p.invoiceLabel ?? `Payment ${p.paymentId}`}</p>
+                  <p className="text-sm text-muted">
                     {STATUS[p.status] ?? p.status}
                     {p.date ? ` · ${formatDate(p.date)}` : ""}
                   </p>
                 </div>
-                <p className="shrink-0 font-semibold tabular-nums">{formatPesos(p.amount)}</p>
+                <p className="shrink-0 font-extrabold tabular-nums">{formatPesos(p.amount)}</p>
               </li>
             ))}
           </ul>

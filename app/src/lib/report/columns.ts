@@ -1,4 +1,4 @@
-// Column definitions for the rendición, in one place. They follow the draft in
+// Column definitions for the monthly report, in one place. They follow the draft in
 // docs/investigacion-cooperadoras.md section 5 and are meant to be adjusted once the real
 // CooperAr / Jujuy form is confirmed. The web view and the PDF both render from these.
 import {
@@ -20,57 +20,57 @@ export interface Column<Row> {
 }
 
 export const INCOME_CONCEPT_LABEL: Record<IncomeConcept, string> = {
-  aportes_socios: "Aportes de socios",
-  sin_identificar: "Aportes sin identificar",
-  especie: "Aportes en especie",
-  trabajo: "Aportes en trabajo",
+  aportes_socios: "Member contributions",
+  sin_identificar: "Unidentified contributions",
+  especie: "In-kind contributions",
+  trabajo: "Volunteer work",
 };
 
-export const RULE_LABEL = { auto: "Automático (dentro del tope)", signers: "Con firmas" } as const;
+export const RULE_LABEL = { auto: "Automatic (within the cap)", signers: "Signed" } as const;
 
 export const incomeColumns: Column<IncomeRow>[] = [
-  { key: "date", header: "Fecha", flex: 1.2, value: (r) => formatDate(r.date) },
-  { key: "concept", header: "Concepto", flex: 3, value: (r) => INCOME_CONCEPT_LABEL[r.concept] },
+  { key: "date", header: "Date", flex: 1.2, value: (r) => formatDate(r.date) },
+  { key: "concept", header: "Concept", flex: 3, value: (r) => INCOME_CONCEPT_LABEL[r.concept] },
   {
-    key: "reference", header: "Referencia", flex: 2,
-    value: (r) => (r.txHash ? shortHash(r.txHash) : "Carga manual"),
+    key: "reference", header: "Reference", flex: 2,
+    value: (r) => (r.txHash ? shortHash(r.txHash) : "Manual entry"),
   },
-  { key: "amount", header: "Monto", flex: 1.8, align: "right", value: (r) => formatPesos(r.amount) },
+  { key: "amount", header: "Amount", flex: 1.8, align: "right", value: (r) => formatPesos(r.amount) },
 ];
 
 export const expenseColumns: Column<ExpenseRow>[] = [
-  { key: "date", header: "Fecha", flex: 1.3, value: (r) => formatDate(r.date) },
-  { key: "vendor", header: "Proveedor", flex: 2.6, value: (r) => r.vendor },
-  { key: "cuit", header: "CUIT", flex: 2, value: (r) => r.cuit ?? "-" },
+  { key: "date", header: "Date", flex: 1.3, value: (r) => formatDate(r.date) },
+  { key: "vendor", header: "Vendor", flex: 2.6, value: (r) => r.vendor },
+  { key: "cuit", header: "Tax ID", flex: 2, value: (r) => r.cuit ?? "-" },
   {
-    key: "comprobante", header: "Comprobante", flex: 2.4,
+    key: "comprobante", header: "Invoice", flex: 2.4,
     value: (r) => `${r.comprobanteTipo} ${r.comprobanteNumero}`,
     href: (r) => r.invoiceUrl,
   },
-  { key: "concept", header: "Concepto", flex: 2.2, value: (r) => r.concept },
-  { key: "line", header: "Partida", flex: 1.8, value: (r) => r.lineName },
-  { key: "amount", header: "Monto", flex: 2, align: "right", value: (r) => formatPesos(r.amount) },
+  { key: "concept", header: "Concept", flex: 2.2, value: (r) => r.concept },
+  { key: "line", header: "Budget line", flex: 1.8, value: (r) => r.lineName },
+  { key: "amount", header: "Amount", flex: 2, align: "right", value: (r) => formatPesos(r.amount) },
   {
-    key: "rule", header: "Regla", flex: 1.8,
+    key: "rule", header: "Rule", flex: 1.8,
     value: (r) => {
-      const flags = [r.overBudget ? "excedió la partida" : "", r.budgetExpired ? "presupuesto vencido" : ""].filter(Boolean);
+      const flags = [r.overBudget ? "exceeded its line" : "", r.budgetExpired ? "expired budget" : ""].filter(Boolean);
       return [RULE_LABEL[r.rule], ...flags].join(" - ");
     },
   },
 ];
 
 export const lineColumns: Column<LineSummaryRow>[] = [
-  { key: "name", header: "Partida", flex: 3, value: (r) => r.name },
-  { key: "allocated", header: "Asignado", flex: 2, align: "right", value: (r) => formatPesos(r.allocated) },
-  { key: "spent", header: "Gastado", flex: 2, align: "right", value: (r) => formatPesos(r.spent) },
-  { key: "available", header: "Disponible", flex: 2, align: "right", value: (r) => formatPesos(r.available) },
+  { key: "name", header: "Budget line", flex: 3, value: (r) => r.name },
+  { key: "allocated", header: "Allocated", flex: 2, align: "right", value: (r) => formatPesos(r.allocated) },
+  { key: "spent", header: "Spent", flex: 2, align: "right", value: (r) => formatPesos(r.spent) },
+  { key: "available", header: "Available", flex: 2, align: "right", value: (r) => formatPesos(r.available) },
 ];
 
 export const changeColumns: Column<BudgetChangeRow>[] = [
-  { key: "date", header: "Fecha", flex: 1.3, value: (r) => formatDate(r.date) },
-  { key: "description", header: "Cambio", flex: 4, value: (r) => r.description },
-  { key: "reason", header: "Motivo", flex: 3, value: (r) => r.reason ?? "-" },
-  { key: "signers", header: "Firmaron", flex: 2.4, value: (r) => (r.signers.length ? r.signers.join(", ") : "-") },
+  { key: "date", header: "Date", flex: 1.3, value: (r) => formatDate(r.date) },
+  { key: "description", header: "Change", flex: 4, value: (r) => r.description },
+  { key: "reason", header: "Reason", flex: 3, value: (r) => r.reason ?? "-" },
+  { key: "signers", header: "Signed by", flex: 2.4, value: (r) => (r.signers.length ? r.signers.join(", ") : "-") },
 ];
 
 /** Link to the proof of a transaction, if the chain has an explorer. */

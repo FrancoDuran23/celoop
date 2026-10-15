@@ -1,4 +1,4 @@
-// Executed configuration proposals, described in plain Spanish, with signers shown by role.
+// Executed configuration proposals, described in plain English, with signers shown by role.
 import { and, eq } from "drizzle-orm";
 import type { Db } from "@/db";
 import { approvals, budgetLines, chainEvents, persons, proposals, vendors } from "@/db/schema";
@@ -7,6 +7,7 @@ import type { BudgetChangeRow } from "./types";
 
 const KIND_NAMES = ["setbudget", "movebudget", "setvendor", "setcaps", "setsigners", "setagent", "setconfighash", "unpause"];
 const ROLE_ORDER = ["presidente", "tesorero", "secretario", "revisor"];
+const ROLE_LABEL: Record<string, string> = { presidente: "President", tesorero: "Treasurer", secretario: "Secretary", revisor: "Auditor" };
 
 export function normalizeKind(kind: string): string {
   const k = kind.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -43,14 +44,14 @@ export async function loadLookups(db: Db): Promise<Lookups> {
   for (const p of people) {
     if (!p.safeAddress) continue;
     const role = ROLE_ORDER.find((r) => p.roles.includes(r));
-    roles.set(p.safeAddress.toLowerCase(), role ? role[0].toUpperCase() + role.slice(1) : "Firmante");
+    roles.set(p.safeAddress.toLowerCase(), role ? ROLE_LABEL[role] : "Signer");
   }
   const vendorByAddr = new Map(vendorRows.map((v) => [v.address.toLowerCase(), v.legalName]));
 
   return {
-    lineName: (id) => (id ? (names.get(id.toLowerCase()) ?? "otra partida") : "otra partida"),
-    roleOf: (a) => roles.get(a.toLowerCase()) ?? "Firmante",
-    vendorName: (a) => (a ? (vendorByAddr.get(a.toLowerCase()) ?? "un proveedor") : "un proveedor"),
+    lineName: (id) => (id ? (names.get(id.toLowerCase()) ?? "another line") : "another line"),
+    roleOf: (a) => roles.get(a.toLowerCase()) ?? "Signer",
+    vendorName: (a) => (a ? (vendorByAddr.get(a.toLowerCase()) ?? "a vendor") : "a vendor"),
     threshold: Number(last?.threshold ?? 2) || 2,
     signerCount: Array.isArray(last?.signers) ? last.signers.length : 3,
   };
@@ -60,26 +61,26 @@ export function describeProposal(kind: string, decoded: unknown, l: Lookups): st
   const d = (decoded && typeof decoded === "object" ? decoded : {}) as Record<string, unknown>;
   switch (normalizeKind(kind)) {
     case "movebudget":
-      return `Se movieron ${formatPesos(pick(d, "amount") ?? "0")} de la partida ${l.lineName(pick(d, "fromLine", "from"))} a la partida ${l.lineName(pick(d, "toLine", "to"))}.`;
+      return `Moved ${formatPesos(pick(d, "amount") ?? "0")} from the ${l.lineName(pick(d, "fromLine", "from"))} line to the ${l.lineName(pick(d, "toLine", "to"))} line.`;
     case "setbudget":
-      return `Se fijó la partida ${l.lineName(pick(d, "lineId", "line"))} en ${formatPesos(pick(d, "allocated", "amount") ?? "0")}.`;
+      return `Set the ${l.lineName(pick(d, "lineId", "line"))} line to ${formatPesos(pick(d, "allocated", "amount") ?? "0")}.`;
     case "setvendor": {
       const cuit = pick(d, "cuit");
-      const who = cuit ? `el proveedor con CUIT ${formatCuit(cuit)}` : `el proveedor ${l.vendorName(pick(d, "vendor"))}`;
-      return `Se ${pick(d, "enabled") === "false" ? "deshabilitó" : "habilitó"} a ${who}.`;
+      const who = cuit ? `the vendor with tax ID ${formatCuit(cuit)}` : `the vendor ${l.vendorName(pick(d, "vendor"))}`;
+      return `${pick(d, "enabled") === "false" ? "Disabled" : "Enabled"} ${who}.`;
     }
     case "setcaps":
-      return `Se cambiaron los topes: ${formatPesos(pick(d, "perTxCap") ?? "0")} por pago y ${formatPesos(pick(d, "vendorMonthlyCap") ?? "0")} por proveedor al mes.`;
+      return `Changed the caps: ${formatPesos(pick(d, "perTxCap") ?? "0")} per payment and ${formatPesos(pick(d, "vendorMonthlyCap") ?? "0")} per vendor per month.`;
     case "setsigners":
-      return `Se cambió el grupo de firmantes${pick(d, "threshold") ? ` (se necesitan ${pick(d, "threshold")} firmas)` : ""}.`;
+      return `Changed the group of signers${pick(d, "threshold") ? ` (${pick(d, "threshold")} signatures required)` : ""}.`;
     case "setagent":
-      return "Se cambió el agente que prepara los pagos.";
+      return "Changed the agent that prepares payments.";
     case "setconfighash":
-      return "Se actualizó la configuración de la cooperadora.";
+      return "Updated the co-op's published configuration.";
     case "unpause":
-      return "Se reactivaron los pagos.";
+      return "Resumed payments.";
     default:
-      return "Cambio de configuración.";
+      return "Configuration change.";
   }
 }
 

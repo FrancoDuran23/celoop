@@ -115,13 +115,13 @@ export function buildProposal(input: ProposalInput, ctx: BuildContext): BuildRes
 
   switch (input.kind) {
     case "MoveBudget": {
-      if (!lineName(input.fromLine as Hex) || !lineName(input.toLine as Hex)) return fail("Elegí las dos partidas.");
-      if (input.fromLine.toLowerCase() === input.toLine.toLowerCase()) return fail("Elegí dos partidas distintas.");
+      if (!lineName(input.fromLine as Hex) || !lineName(input.toLine as Hex)) return fail("Pick both budget lines.");
+      if (input.fromLine.toLowerCase() === input.toLine.toLowerCase()) return fail("Pick two different budget lines.");
       const amount = parsePesos(input.amount);
-      if (amount === null) return fail("Escribí un monto, por ejemplo 100.000.");
+      if (amount === null) return fail("Enter an amount, for example 100.000.");
       const reasonText = input.reason.trim();
-      if (!reasonText) return fail("Escribí el motivo.");
-      if (reasonText.length > 500) return fail("El motivo es muy largo.");
+      if (!reasonText) return fail("Enter the reason.");
+      if (reasonText.length > 500) return fail("The reason is too long.");
       const args = { fromLine: input.fromLine as Hex, toLine: input.toLine as Hex, amount, reasonText };
       const data = encodeMoveBudget(args);
       return finish({ kind: "MoveBudget", fromLine: args.fromLine, toLine: args.toLine, amount, reasonHash: keccak256(stringToBytes(reasonText)) }, data, {
@@ -135,35 +135,35 @@ export function buildProposal(input: ProposalInput, ctx: BuildContext): BuildRes
       let newLine: ProposalMeta["newLine"];
       if (input.line === "new") {
         const name = (input.newName ?? "").trim();
-        if (name.length < 2 || name.length > 60) return fail("Escribí el nombre de la partida nueva.");
+        if (name.length < 2 || name.length > 60) return fail("Enter the name of the new budget line.");
         const slug = (input.newSlug ?? "").trim() || slugify(name);
-        if (!SLUG_PATTERN.test(slug) || slug.length > 40) return fail("El identificador de la partida solo puede tener letras, números y guiones.");
+        if (!SLUG_PATTERN.test(slug) || slug.length > 40) return fail("The line identifier can only have letters, numbers and hyphens.");
         const lineId = lineIdOf(slug);
         const existing = ctx.lines.find((l) => l.lineId.toLowerCase() === lineId.toLowerCase());
-        if (existing) return fail(`Ya existe la partida ${existing.name}. Elegila de la lista.`);
+        if (existing) return fail(`The line ${existing.name} already exists. Pick it from the list.`);
         line = { lineId, name };
         newLine = { slug, name };
       } else {
         const name = lineName(input.line as Hex);
-        if (!name) return fail("Elegí una partida.");
+        if (!name) return fail("Pick a budget line.");
         line = { lineId: input.line as Hex, name };
       }
       const allocated = parsePesos(input.amount);
-      if (allocated === null) return fail("Escribí el monto asignado, por ejemplo 500.000.");
+      if (allocated === null) return fail("Enter the allocated amount, for example 500.000.");
       const periodEnd = periodEndOf(input.periodEnd);
-      if (periodEnd === null) return fail("Elegí la fecha de fin del período.");
-      if (periodEnd <= BigInt(ctx.now ?? Math.floor(Date.now() / 1000))) return fail("La fecha de fin tiene que ser futura.");
+      if (periodEnd === null) return fail("Pick the end date of the period.");
+      if (periodEnd <= BigInt(ctx.now ?? Math.floor(Date.now() / 1000))) return fail("The end date has to be in the future.");
       const data = encodeSetBudget({ lineId: line.lineId, allocated, periodEnd });
       return finish({ kind: "SetBudget", lineId: line.lineId, allocated, periodEnd }, data, newLine ? { newLine } : {}, { line });
     }
     case "SetVendor": {
       const legalName = input.legalName.trim();
-      if (legalName.length < 2 || legalName.length > 200) return fail("Escribí la razón social del proveedor.");
+      if (legalName.length < 2 || legalName.length > 200) return fail("Enter the vendor's legal name.");
       const cuit = parseCuit(input.cuit);
-      if (cuit === null) return fail("El CUIT no es válido. Revisá los 11 números.");
+      if (cuit === null) return fail("The tax ID (CUIT) isn't valid. Check the 11 digits.");
       const address = input.address.trim();
       if (!isAddress(address, { strict: false }) || address.toLowerCase() === zeroAddress) {
-        return fail("Falta la cuenta del proveedor, o no es válida.");
+        return fail("The vendor's account is missing or isn't valid.");
       }
       const vendor: Address = getAddress(address);
       const data = encodeSetVendor({ vendor, cuit, enabled: input.enabled });
@@ -172,9 +172,9 @@ export function buildProposal(input: ProposalInput, ctx: BuildContext): BuildRes
     case "SetCaps": {
       const perTxCap = parsePesos(input.perTxCap);
       const vendorMonthlyCap = parsePesos(input.vendorMonthlyCap);
-      if (perTxCap === null) return fail("Escribí el tope por pago.");
-      if (vendorMonthlyCap === null) return fail("Escribí el tope mensual por proveedor.");
-      if (vendorMonthlyCap < perTxCap) return fail("El tope mensual por proveedor no puede ser menor que el tope por pago.");
+      if (perTxCap === null) return fail("Enter the cap per payment.");
+      if (vendorMonthlyCap === null) return fail("Enter the monthly cap per vendor.");
+      if (vendorMonthlyCap < perTxCap) return fail("The monthly cap per vendor can't be lower than the cap per payment.");
       return finish({ kind: "SetCaps", perTxCap, vendorMonthlyCap }, encodeSetCaps({ perTxCap, vendorMonthlyCap }), {});
     }
   }

@@ -7,10 +7,10 @@ export function ProgressBar({ spent, allocated, label }: { spent: string; alloca
   return (
     <div
       role="img"
-      aria-label={`${label}: ${Math.round(pct)}% gastado`}
-      className="h-3 w-full overflow-hidden rounded-full bg-line"
+      aria-label={`${label}: ${Math.round(pct)}% spent`}
+      className="h-4 w-full overflow-hidden rounded-full border-2 border-ink bg-surface"
     >
-      <div className={`h-full ${over ? "bg-danger" : "bg-accent"}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+      <div className={`h-full ${over ? "bg-red" : "bg-blue"}`} style={{ width: `${Math.min(pct, 100)}%` }} />
     </div>
   );
 }

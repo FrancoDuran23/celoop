@@ -18,7 +18,7 @@ export function TelegramGate({ children }: { children: ReactNode }) {
       await navigator.clipboard.writeText(window.location.href);
       setCopied(true);
     } catch {
-      window.prompt("Copiá este link:", window.location.href);
+      window.prompt("Copy this link:", window.location.href);
     }
   };
   const isAndroid = /android/i.test(navigator.userAgent);
@@ -26,18 +26,17 @@ export function TelegramGate({ children }: { children: ReactNode }) {
 
   return (
     <div className="space-y-4">
-      <PageTitle>Abrí este link en Chrome o Safari</PageTitle>
-      <p className="text-[15px] leading-relaxed text-black/75 dark:text-white/75">
-        Desde Telegram no se puede firmar con la huella, la cara o el PIN. Copiá el link y abrilo en el navegador del
-        teléfono.
+      <PageTitle>Open this link in Chrome or Safari</PageTitle>
+      <p className="text-[15px] leading-relaxed text-muted">
+        Signing with your fingerprint, face or PIN doesn’t work inside Telegram. Copy the link and open it in your phone’s browser.
       </p>
-      <Button onClick={copy}>{copied ? "Link copiado" : "Copiar el link"}</Button>
+      <Button onClick={copy}>{copied ? "Link copied" : "Copy the link"}</Button>
       {isAndroid ? (
-        <a className="block text-center font-medium text-emerald-800 underline underline-offset-4 dark:text-emerald-300" href={chromeIntent}>
-          Abrir en Chrome
+        <a className="block text-center font-bold" href={chromeIntent}>
+          Open in Chrome
         </a>
       ) : null}
-      {copied ? <Notice tone="ok">Listo. Ahora pegalo en Chrome o Safari.</Notice> : null}
+      {copied ? <Notice tone="ok">Done. Now paste it in Chrome or Safari.</Notice> : null}
     </div>
   );
 }

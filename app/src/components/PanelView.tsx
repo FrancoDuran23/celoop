@@ -1,7 +1,9 @@
 import Link from "next/link";
-import { formatDate, MONTHS_ES, periodLabel } from "@/lib/report/format";
+import { formatDate, MONTHS_EN, periodLabel } from "@/lib/report/format";
 import type { PanelData } from "@/lib/report/panel";
+import { APP_NAME } from "@/lib/brand";
 import { Banner, Tag } from "./Banner";
+import { Robot, Sparks } from "./Brand";
 import { Card } from "./Card";
 import { Money } from "./Money";
 import { ProgressBar } from "./ProgressBar";
@@ -9,61 +11,78 @@ import { TxLink } from "./TxLink";
 
 function monthName(key: string) {
   const [y, m] = key.split("-").map(Number);
-  return `${MONTHS_ES[m - 1][0].toUpperCase()}${MONTHS_ES[m - 1].slice(1)} ${y}`;
+  return `${MONTHS_EN[m - 1]} ${y}`;
+}
+
+function Empty({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="flex items-center gap-3 text-muted">
+      <Robot size={36} hue="yellow" />
+      <span>{children}</span>
+    </p>
+  );
 }
 
 /** The public transparency panel. Pure view over PanelData. */
 export function PanelView({ data }: { data: PanelData | null }) {
   if (!data) {
     return (
-      <main className="mx-auto max-w-4xl px-4 py-10">
-        <Card title="Todavía no hay datos">
-          <p>La cooperadora todavía no cargó su información. Volvé a probar en un rato.</p>
+      <main className="mx-auto flex max-w-4xl flex-col gap-6 px-4 py-10">
+        <Card title="Nothing here yet" hue="yellow">
+          <Empty>This co-op has not loaded its information yet. Come back in a bit.</Empty>
         </Card>
       </main>
     );
   }
   const { header } = data;
   return (
-    <main className="mx-auto flex max-w-4xl flex-col gap-4 px-4 py-6">
-      <section aria-labelledby="titulo" className="rounded-lg border border-line bg-surface p-4 sm:p-5">
-        <h1 id="titulo" className="text-2xl font-bold leading-tight">{header.cooperadora}</h1>
-        <p className="mt-1 text-muted">{header.school}</p>
-        <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
-          <dt className="text-muted">CUIT</dt>
-          <dd className="num">{header.cuit}</dd>
-          <dt className="text-muted">N° RUCE</dt>
-          <dd className="num">{header.ruce ?? "-"}</dd>
-        </dl>
-        <div className="mt-4 border-t border-line pt-3">
-          <p className="text-sm text-muted">Saldo actual de la cooperadora</p>
-          <p className="text-3xl font-bold"><Money value={data.balance} /></p>
-          <p className="text-xs text-muted">
-            {data.balanceSource === "chain" ? "Leído en este momento del registro público." : "Calculado con los movimientos registrados."}
-          </p>
+    <main className="mx-auto flex max-w-4xl flex-col gap-5 px-4 py-6">
+      <section aria-labelledby="title" className="overflow-hidden rounded-2xl border-[3px] border-ink bg-surface shadow-hard">
+        <div className="minga-band flex items-center justify-between gap-4 border-b-[3px] border-ink px-4 py-3 text-white sm:px-5">
+          <p className="text-sm font-extrabold uppercase tracking-wide">Public ledger · live</p>
+          <Sparks className="hidden sm:block" />
+        </div>
+        <div className="grid gap-4 p-4 sm:grid-cols-[1fr_auto] sm:p-5">
+          <div>
+            <h1 id="title" className="text-3xl font-black leading-tight tracking-tight text-balance">{header.cooperadora}</h1>
+            <p className="mt-1 text-lg font-semibold text-muted">{header.school}</p>
+            <dl className="mt-3 grid max-w-sm grid-cols-2 gap-x-4 gap-y-1 text-sm">
+              <dt className="text-muted">Tax ID (CUIT)</dt>
+              <dd className="num font-semibold">{header.cuit}</dd>
+              <dt className="text-muted">Registry no. (RUCE)</dt>
+              <dd className="num font-semibold">{header.ruce ?? "-"}</dd>
+            </dl>
+          </div>
+          <div className="rounded-2xl border-[3px] border-ink bg-yellow px-4 py-3 shadow-hard-sm sm:min-w-64">
+            <p className="text-sm font-bold">Current balance</p>
+            <p className="text-3xl font-black leading-tight"><Money value={data.balance} /></p>
+            <p className="mt-1 text-xs font-semibold text-yellow-ink">
+              {data.balanceSource === "chain" ? "Read from the ledger just now." : "Computed from recorded movements."}
+            </p>
+          </div>
         </div>
       </section>
 
       {data.expiredBudget ? (
-        <Banner tone="warn">Presupuesto 2026 vencido, en uso hasta la próxima asamblea.</Banner>
+        <Banner tone="warn">The 2026 budget has expired and stays in use until the next assembly votes a new one.</Banner>
       ) : null}
 
-      <Card title="Partidas del presupuesto" description="Cuánto se asignó, cuánto se gastó y cuánto queda en cada partida.">
+      <Card title="Budget lines" description="How much was allocated, spent and what is left in each line." hue="blue">
         {data.lines.length === 0 ? (
-          <p className="text-muted">Todavía no hay partidas cargadas.</p>
+          <Empty>No budget lines loaded yet.</Empty>
         ) : (
           <ul className="flex flex-col gap-4">
             {data.lines.map((l) => (
               <li key={l.slug}>
                 <div className="flex flex-wrap items-baseline justify-between gap-x-3">
-                  <span className="font-medium">{l.name}</span>
-                  {l.over ? <Tag tone="danger">Se pasó de la partida</Tag> : null}
+                  <span className="font-bold">{l.name}</span>
+                  {l.over ? <Tag tone="danger">Over budget</Tag> : null}
                 </div>
                 <div className="my-1.5"><ProgressBar spent={l.spent} allocated={l.allocated} label={l.name} /></div>
                 <dl className="grid grid-cols-3 gap-2 text-sm">
-                  <div><dt className="text-muted">Asignado</dt><dd><Money value={l.allocated} /></dd></div>
-                  <div><dt className="text-muted">Gastado</dt><dd><Money value={l.spent} /></dd></div>
-                  <div><dt className="text-muted">Disponible</dt><dd><Money value={l.available} negative={l.over} className={l.over ? "font-semibold" : ""} /></dd></div>
+                  <div><dt className="text-muted">Allocated</dt><dd className="font-semibold"><Money value={l.allocated} /></dd></div>
+                  <div><dt className="text-muted">Spent</dt><dd className="font-semibold"><Money value={l.spent} /></dd></div>
+                  <div><dt className="text-muted">Available</dt><dd className="font-semibold"><Money value={l.available} negative={l.over} /></dd></div>
                 </dl>
               </li>
             ))}
@@ -71,20 +90,20 @@ export function PanelView({ data }: { data: PanelData | null }) {
         )}
       </Card>
 
-      <Card title="Aportes por mes" description="Solo cantidades y totales. No se muestran nombres.">
+      <Card title="Contributions by month" description="Counts and totals only. No names, ever." hue="yellow">
         {data.contributionsByMonth.length === 0 ? (
-          <p className="text-muted">Todavía no hay aportes registrados.</p>
+          <Empty>No contributions recorded yet.</Empty>
         ) : (
           <table className="w-full text-left text-sm">
             <thead className="text-muted">
-              <tr><th className="py-1 font-medium">Mes</th><th className="py-1 text-right font-medium">Aportes</th><th className="py-1 text-right font-medium">Total</th></tr>
+              <tr><th className="py-1 font-bold">Month</th><th className="py-1 text-right font-bold">Contributions</th><th className="py-1 text-right font-bold">Total</th></tr>
             </thead>
             <tbody>
               {data.contributionsByMonth.map((m) => (
-                <tr key={m.month} className="border-t border-line">
-                  <td className="py-2">{monthName(m.month)}</td>
+                <tr key={m.month} className="border-t-2 border-line">
+                  <td className="py-2 font-semibold">{monthName(m.month)}</td>
                   <td className="num py-2 text-right">{m.count}</td>
-                  <td className="py-2 text-right"><Money value={m.total} /></td>
+                  <td className="py-2 text-right font-semibold"><Money value={m.total} /></td>
                 </tr>
               ))}
             </tbody>
@@ -92,28 +111,28 @@ export function PanelView({ data }: { data: PanelData | null }) {
         )}
       </Card>
 
-      <Card title="Egresos" description="Del más reciente al más viejo. Cada pago tiene su factura y su comprobante en el registro público.">
+      <Card title="Payments" description="Newest first. Every payment has its invoice and its proof on the public ledger." hue="red">
         {data.expenses.length === 0 ? (
-          <p className="text-muted">Todavía no hay pagos realizados.</p>
+          <Empty>No payments made yet.</Empty>
         ) : (
-          <ul className="divide-y divide-line">
+          <ul className="divide-y-2 divide-line">
             {data.expenses.map((e) => (
               <li key={e.paymentId} className="py-3 first:pt-0 last:pb-0">
                 <div className="flex items-baseline justify-between gap-3">
-                  <span className="font-medium">{e.vendor}</span>
-                  <Money value={e.amount} className="font-semibold" />
+                  <span className="font-bold">{e.vendor}</span>
+                  <Money value={e.amount} className="font-extrabold" />
                 </div>
                 <p className="text-sm text-muted">
                   {formatDate(e.date)} · {e.lineName}{e.cuit ? ` · CUIT ${e.cuit}` : ""}
                 </p>
                 <p className="mt-1 text-sm">
-                  {e.rule === "auto" ? "Automático (dentro del tope)" : `Con firmas (${e.approvals} de ${e.signerCount})`}
+                  {e.rule === "auto" ? "Automatic (within the cap)" : `Signed (${e.approvals} of ${e.signerCount})`}
                 </p>
                 <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1">
-                  {e.overBudget ? <Tag tone="danger">Excedió la partida</Tag> : null}
-                  {e.budgetExpired ? <Tag tone="warn">Presupuesto vencido</Tag> : null}
+                  {e.overBudget ? <Tag tone="danger">Exceeded its line</Tag> : null}
+                  {e.budgetExpired ? <Tag tone="warn">Expired budget</Tag> : null}
                   {e.invoiceUrl ? (
-                    <a href={e.invoiceUrl} target="_blank" rel="noopener noreferrer" className="text-sm">Ver factura</a>
+                    <a href={e.invoiceUrl} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold">View invoice</a>
                   ) : null}
                   <TxLink txHash={e.txHash} chainId={header.chainId} />
                 </div>
@@ -123,21 +142,21 @@ export function PanelView({ data }: { data: PanelData | null }) {
         )}
       </Card>
 
-      <Card title="Pagos esperando firmas">
+      <Card title="Waiting for signatures" hue="blue">
         {data.pending.length === 0 ? (
-          <p className="text-muted">No hay pagos esperando firmas.</p>
+          <Empty>No payments waiting for signatures.</Empty>
         ) : (
-          <ul className="divide-y divide-line">
+          <ul className="divide-y-2 divide-line">
             {data.pending.map((p) => (
               <li key={p.paymentId} className="py-3 first:pt-0 last:pb-0">
                 <div className="flex items-baseline justify-between gap-3">
-                  <span className="font-medium">{p.vendor}</span>
-                  <Money value={p.amount} className="font-semibold" />
+                  <span className="font-bold">{p.vendor}</span>
+                  <Money value={p.amount} className="font-extrabold" />
                 </div>
                 <p className="text-sm text-muted">{p.lineName}</p>
                 <p className="text-sm">
-                  Tiene {p.approvals} {p.approvals === 1 ? "firma" : "firmas"}
-                  {p.missing > 0 ? `, faltan ${p.missing}.` : ", ya alcanza el mínimo."}
+                  Has {p.approvals} {p.approvals === 1 ? "signature" : "signatures"}
+                  {p.missing > 0 ? `, ${p.missing} more needed.` : ", enough to go ahead."}
                 </p>
               </li>
             ))}
@@ -145,17 +164,17 @@ export function PanelView({ data }: { data: PanelData | null }) {
         )}
       </Card>
 
-      <Card title="Cambios de presupuesto y configuración">
+      <Card title="Budget and rule changes" hue="yellow">
         {data.changes.length === 0 ? (
-          <p className="text-muted">No hubo cambios.</p>
+          <Empty>No changes so far.</Empty>
         ) : (
-          <ul className="divide-y divide-line">
+          <ul className="divide-y-2 divide-line">
             {data.changes.map((c, i) => (
               <li key={`${c.txHash ?? "c"}-${i}`} className="py-3 first:pt-0 last:pb-0">
                 <p className="text-sm text-muted">{formatDate(c.date)}</p>
-                <p>{c.description}</p>
-                {c.reason ? <p className="text-sm">Motivo: {c.reason}</p> : null}
-                <p className="text-sm text-muted">Firmaron: {c.signers.length ? c.signers.join(", ") : "sin datos"}</p>
+                <p className="font-semibold">{c.description}</p>
+                {c.reason ? <p className="text-sm">Reason: {c.reason}</p> : null}
+                <p className="text-sm text-muted">Signed by: {c.signers.length ? c.signers.join(", ") : "no data"}</p>
                 <TxLink txHash={c.txHash} chainId={header.chainId} />
               </li>
             ))}
@@ -163,22 +182,26 @@ export function PanelView({ data }: { data: PanelData | null }) {
         )}
       </Card>
 
-      <Card title="Rendiciones publicadas">
+      <Card title="Published monthly reports" hue="red">
         {data.publishedReports.length === 0 ? (
-          <p className="text-muted">Todavía no se publicó ninguna rendición.</p>
+          <Empty>No monthly report has been published yet.</Empty>
         ) : (
           <ul className="flex flex-col gap-2">
             {data.publishedReports.map((r) => (
               <li key={r.period} className="flex flex-wrap gap-x-4">
-                <Link href={`/rendicion/${r.period}`} className="font-medium">
-                  Rendición de {periodLabel(r.period)}
+                <Link href={`/rendicion/${r.period}`} className="font-bold">
+                  Report for {periodLabel(r.period)}
                 </Link>
-                <a href={`/rendicion/${r.period}/pdf`} className="text-sm">Descargar PDF</a>
+                <a href={`/rendicion/${r.period}/pdf`} className="text-sm font-semibold">Download PDF</a>
               </li>
             ))}
           </ul>
         )}
       </Card>
+
+      <p className="text-center text-sm text-muted">
+        New here? <Link href="/#how">Read how {APP_NAME} works</Link>.
+      </p>
     </main>
   );
 }

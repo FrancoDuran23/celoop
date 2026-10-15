@@ -151,63 +151,63 @@ export type DescribeContext = {
 };
 
 export type ProposalDescription = {
-  /** One sentence, e.g. "Mover $ 100.000,00 de Eventos a Mantenimiento. Motivo: rotura de caño". */
+  /** One sentence, e.g. "Move $ 100.000,00 from Eventos to Mantenimiento. Reason: burst pipe". */
   summary: string;
   /** For MoveBudget: whether reasonText hashes to what the contract has. null = no text saved. */
   reasonMatches: boolean | null;
 };
 
 const formatDate = (unixSeconds: bigint) =>
-  new Date(Number(unixSeconds) * 1000).toLocaleDateString("es-AR", {
+  new Date(Number(unixSeconds) * 1000).toLocaleDateString("en-US", {
     timeZone: "America/Argentina/Buenos_Aires",
     day: "numeric",
     month: "long",
     year: "numeric",
   });
 
-/** The proposal as one sentence in plain Spanish. */
+/** The proposal as one sentence in plain English. */
 export function describeProposal(proposal: DecodedProposal, ctx: DescribeContext = {}): ProposalDescription {
-  const line = (id: Hex) => ctx.lineName?.(id) ?? `una partida sin nombre (${shortAddress(id)})`;
+  const line = (id: Hex) => ctx.lineName?.(id) ?? `an unnamed line (${shortAddress(id)})`;
   const vendor = (a: Address) => ctx.vendorName?.(a) ?? shortAddress(a);
   switch (proposal.kind) {
     case "MoveBudget": {
       const text = ctx.reasonText?.trim();
       const matches = text ? reasonHash(ctx.reasonText!) === proposal.reasonHash : null;
-      const motive = text ? ` Motivo: ${text}` : "";
+      const motive = text ? ` Reason: ${text}` : "";
       return {
-        summary: `Mover ${formatPesos(proposal.amount)} de ${line(proposal.fromLine)} a ${line(proposal.toLine)}.${motive}`,
+        summary: `Move ${formatPesos(proposal.amount)} from ${line(proposal.fromLine)} to ${line(proposal.toLine)}.${motive}`,
         reasonMatches: matches,
       };
     }
     case "SetBudget":
       return {
-        summary: `Asignar ${formatPesos(proposal.allocated)} a ${line(proposal.lineId)}, hasta el ${formatDate(proposal.periodEnd)}.`,
+        summary: `Allocate ${formatPesos(proposal.allocated)} to ${line(proposal.lineId)}, until ${formatDate(proposal.periodEnd)}.`,
         reasonMatches: null,
       };
     case "SetVendor":
       return {
         summary: proposal.enabled
-          ? `Habilitar al proveedor ${vendor(proposal.vendor)} (CUIT ${formatCuit(proposal.cuit)}).`
-          : `Dar de baja al proveedor ${vendor(proposal.vendor)} (CUIT ${formatCuit(proposal.cuit)}).`,
+          ? `Enable the vendor ${vendor(proposal.vendor)} (tax ID ${formatCuit(proposal.cuit)}).`
+          : `Remove the vendor ${vendor(proposal.vendor)} (tax ID ${formatCuit(proposal.cuit)}).`,
         reasonMatches: null,
       };
     case "SetCaps":
       return {
-        summary: `Cambiar los topes de pago automático: hasta ${formatPesos(proposal.perTxCap)} por pago y ${formatPesos(proposal.vendorMonthlyCap)} por proveedor cada 30 días.`,
+        summary: `Change the automatic payment caps: up to ${formatPesos(proposal.perTxCap)} per payment and ${formatPesos(proposal.vendorMonthlyCap)} per vendor every 30 days.`,
         reasonMatches: null,
       };
     case "SetSigners": {
       const n = proposal.signers.length;
       return {
-        summary: `Cambiar quiénes firman: ${n} ${n === 1 ? "persona" : "personas"}, y cada pago grande necesita ${proposal.threshold} ${proposal.threshold === BigInt(1) ? "firma" : "firmas"}.`,
+        summary: `Change who signs: ${n} ${n === 1 ? "person" : "people"}, and every big payment needs ${proposal.threshold} ${proposal.threshold === BigInt(1) ? "signature" : "signatures"}.`,
         reasonMatches: null,
       };
     }
     case "SetAgent":
-      return { summary: `Cambiar el agente que propone los pagos a ${shortAddress(proposal.agent)}.`, reasonMatches: null };
+      return { summary: `Change the agent that proposes payments to ${shortAddress(proposal.agent)}.`, reasonMatches: null };
     case "SetConfigHash":
-      return { summary: "Actualizar la configuración publicada de la cooperadora.", reasonMatches: null };
+      return { summary: "Update the co-op's published configuration.", reasonMatches: null };
     case "Unpause":
-      return { summary: "Reanudar los pagos, que hoy están pausados.", reasonMatches: null };
+      return { summary: "Resume payments, which are paused right now.", reasonMatches: null };
   }
 }

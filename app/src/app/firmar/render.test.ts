@@ -37,7 +37,7 @@ describe("signing pages", () => {
           amount: (BigInt(80000) * E18).toString(),
           lineName: "Mantenimiento",
           invoiceUrl: "https://blob/f.pdf",
-          invoiceLabel: "Factura C 00002-00000345",
+          invoiceLabel: "Invoice C 00002-00000345",
           approvals: 1,
           threshold: 2,
           overBudget: true,
@@ -48,7 +48,7 @@ describe("signing pages", () => {
       }),
     );
     const t = text(html);
-    for (const s of ["Ferretería El Tornillo", "20-12345678-9", "$ 80.000,00", "Mantenimiento", "Ver la factura", "1 de 2 firmas", "falta 1", "supera lo que queda", "Aprobar", "Rechazar"]) {
+    for (const s of ["Ferretería El Tornillo", "20-12345678-9", "$ 80.000,00", "Mantenimiento", "View the invoice", "1 of 2 signatures", "1 more needed", "more than what’s left", "Approve", "Reject"]) {
       expect(t).toContain(s);
     }
     expect(t.toLowerCase()).not.toContain("gas");
@@ -64,7 +64,7 @@ describe("signing pages", () => {
           view: {
             proposalId: "1",
             kind: "MoveBudget",
-            summary: "Mover $ 100.000,00 de Eventos a Mantenimiento. Motivo: rotura de caño",
+            summary: "Move $ 100.000,00 from Eventos to Mantenimiento. Reason: rotura de caño",
             reasonMatches: true,
             status: "open",
             approvals: 1,
@@ -75,9 +75,9 @@ describe("signing pages", () => {
         }),
       ),
     );
-    expect(t).toContain("Mover $ 100.000,00 de Eventos a Mantenimiento. Motivo: rotura de caño");
-    expect(t).toContain("Aprobar");
-    expect(t).toContain("Pausar todos los pagos");
+    expect(t).toContain("Move $ 100.000,00 from Eventos to Mantenimiento. Reason: rotura de caño");
+    expect(t).toContain("Approve");
+    expect(t).toContain("Pause all payments");
   });
 
   it("propose form, enrollment and the Telegram gate render", () => {
@@ -91,9 +91,9 @@ describe("signing pages", () => {
           signer,
           name: "Ana",
         })))).toContain(
-      "Mover entre partidas",
+      "Move between lines",
     );
-    expect(text(renderToString(createElement(EnrollPasskey, { token: "t", name: "Ana", rpId: "localhost" })))).toContain("Crear mi firma");
+    expect(text(renderToString(createElement(EnrollPasskey, { token: "t", name: "Ana", rpId: "localhost" })))).toContain("Create my signature");
     expect(renderToString(createElement(TelegramGate, null, "contenido"))).toContain("contenido");
   });
 });

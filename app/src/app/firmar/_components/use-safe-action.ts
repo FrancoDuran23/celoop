@@ -37,7 +37,7 @@ export function useSafeAction(config: SignerConfig) {
           attributionSuffix: config.attributionSuffix,
         });
         if (!result.success) {
-          setState({ status: "error", message: "La operación llegó pero no se pudo completar. Puede que alguien ya la haya resuelto. Recargá la página." });
+          setState({ status: "error", message: "The operation arrived but couldn't be completed. Someone may have already resolved it. Reload the page." });
           return null;
         }
         setState({ status: "done", result, explorerUrl: explorerTxUrl(config.chainId, result.transactionHash) });

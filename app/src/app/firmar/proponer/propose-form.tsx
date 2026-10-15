@@ -7,24 +7,19 @@ import { buildProposal, slugify, type BuiltProposal, type ProposalInput } from "
 import type { ProposeContext } from "@/lib/wallet/views";
 import { ActionStatus } from "../_components/action-status";
 import { PauseButton } from "../_components/pause-button";
-import { Button, Card, Notice, PageTitle } from "../_components/ui";
+import { Button, Card, Notice, PageTitle, chip, field, hint, label } from "../_components/ui";
 import { useSafeAction, type SignerConfig } from "../_components/use-safe-action";
 import { saveProposalMeta } from "./actions";
 
 type Kind = ProposalInput["kind"];
 
 const KINDS: [Kind, string][] = [
-  ["MoveBudget", "Mover entre partidas"],
-  ["SetBudget", "Cargar o cambiar una partida"],
-  ["SetVendor", "Alta o baja de proveedor"],
-  ["SetCaps", "Cambiar topes"],
-  ["Unpause", "Reanudar pagos"],
+  ["MoveBudget", "Move between lines"],
+  ["SetBudget", "Add or change a line"],
+  ["SetVendor", "Enable or remove a vendor"],
+  ["SetCaps", "Change the caps"],
+  ["Unpause", "Resume payments"],
 ];
-
-const field =
-  "mt-1 block min-h-12 w-full rounded-xl border border-black/15 bg-white px-3 text-base dark:border-white/20 dark:bg-white/5";
-const label = "block text-sm font-medium";
-const hint = "mt-1 block text-sm font-normal text-black/60 dark:text-white/60";
 
 export function ProposeForm({ context, treasury, signer, name }: { context: ProposeContext; treasury: Address; signer: SignerConfig; name: string }) {
   const { lines, vendors, vendorPeople, caps, paused } = context;
@@ -69,7 +64,7 @@ export function ProposeForm({ context, treasury, signer, name }: { context: Prop
   };
 
   const startReview = () => {
-    if (kind === "Unpause" && !paused) return setError("Los pagos no están pausados.");
+    if (kind === "Unpause" && !paused) return setError("Payments are not paused.");
     const built = buildProposal(input(), { lines });
     if (!built.ok) return setError(built.error);
     setError(null);
@@ -99,13 +94,13 @@ export function ProposeForm({ context, treasury, signer, name }: { context: Prop
   if (state.status === "done" && review) {
     return (
       <div className="space-y-4">
-        <PageTitle eyebrow={`Hola, ${name}`}>Propuesta enviada</PageTitle>
+        <PageTitle eyebrow={`Hi, ${name}`}>Proposal sent</PageTitle>
         <Card>
-          <p className="text-lg leading-snug font-medium text-pretty">{review.summary}</p>
-          <p className="mt-2 text-[15px] text-black/70 dark:text-white/70">Tu firma ya cuenta. Les avisamos a los demás firmantes para que la revisen.</p>
+          <p className="text-lg leading-snug font-bold text-pretty">{review.summary}</p>
+          <p className="mt-2 text-[15px] text-muted">Your signature already counts. We’ve told the other signers to review it.</p>
         </Card>
-        {saveWarning ? <Notice tone="warn">La propuesta quedó registrada, pero {saveWarning.toLowerCase()} Avisale a la comisión.</Notice> : null}
-        <ActionStatus state={state} doneText="Listo." />
+        {saveWarning ? <Notice tone="warn">The proposal was recorded, but {saveWarning.toLowerCase()} Let the board know.</Notice> : null}
+        <ActionStatus state={state} doneText="Done." />
       </div>
     );
   }
@@ -114,17 +109,12 @@ export function ProposeForm({ context, treasury, signer, name }: { context: Prop
 
   return (
     <div className="space-y-5">
-      <PageTitle eyebrow={`Hola, ${name}`}>Proponer un cambio</PageTitle>
+      <PageTitle eyebrow={`Hi, ${name}`}>Propose a change</PageTitle>
 
       <fieldset className="grid grid-cols-2 gap-2" disabled={!editing}>
-        <legend className="sr-only">Tipo de cambio</legend>
+        <legend className="sr-only">Kind of change</legend>
         {KINDS.map(([value, text]) => (
-          <label
-            key={value}
-            className={`flex min-h-12 cursor-pointer items-center justify-center rounded-xl border px-3 py-2 text-center text-[15px] leading-tight font-medium last:col-span-2 ${
-              kind === value ? "border-emerald-700 bg-emerald-50 text-emerald-950 dark:bg-emerald-950/40 dark:text-emerald-100" : "border-black/15 dark:border-white/20"
-            }`}
-          >
+          <label key={value} className={`${chip(kind === value)} last:col-span-2`}>
             <input
               type="radio"
               name="kind"
@@ -146,18 +136,18 @@ export function ProposeForm({ context, treasury, signer, name }: { context: Prop
           {kind === "MoveBudget" ? (
             <>
               <label className={label}>
-                Desde
+                From
                 <select className={field} value={from} onChange={(e) => setFrom(e.target.value)}>
                   {lines.map((l) => (
                     <option key={l.lineId} value={l.lineId}>
                       {l.name}
-                      {l.available !== null ? ` (quedan ${formatPesos(l.available)})` : ""}
+                      {l.available !== null ? ` (${formatPesos(l.available)} left)` : ""}
                     </option>
                   ))}
                 </select>
               </label>
               <label className={label}>
-                Hacia
+                To
                 <select className={field} value={to} onChange={(e) => setTo(e.target.value)}>
                   {lines.map((l) => (
                     <option key={l.lineId} value={l.lineId}>
@@ -167,15 +157,15 @@ export function ProposeForm({ context, treasury, signer, name }: { context: Prop
                 </select>
               </label>
               <label className={label}>
-                Monto en pesos
+                Amount in pesos
                 <input className={field} inputMode="decimal" autoComplete="off" placeholder="100.000" value={moveAmount} onChange={(e) => setMoveAmount(e.target.value)} />
               </label>
               <label className={label}>
-                Motivo
+                Reason
                 <textarea
                   className={`${field} min-h-24 py-2`}
                   maxLength={500}
-                  placeholder="Por ejemplo: rotura de caño en el baño de varones"
+                  placeholder="For example: burst pipe in the boys' bathroom"
                   value={reason}
                   onChange={(e) => setReason(e.target.value)}
                 />
@@ -186,30 +176,30 @@ export function ProposeForm({ context, treasury, signer, name }: { context: Prop
           {kind === "SetBudget" ? (
             <>
               <label className={label}>
-                Partida
+                Budget line
                 <select className={field} value={budgetLine} onChange={(e) => setBudgetLine(e.target.value)}>
                   {lines.map((l) => (
                     <option key={l.lineId} value={l.lineId}>
                       {l.name}
                     </option>
                   ))}
-                  <option value="new">Partida nueva…</option>
+                  <option value="new">New line…</option>
                 </select>
               </label>
               {budgetLine === "new" ? (
                 <label className={label}>
-                  Nombre de la partida nueva
-                  <input className={field} maxLength={60} placeholder="Por ejemplo: Biblioteca" value={newLineName} onChange={(e) => setNewLineName(e.target.value)} />
-                  {newLineName.trim() ? <span className={hint}>Identificador: {slugify(newLineName)}</span> : null}
+                  Name of the new line
+                  <input className={field} maxLength={60} placeholder="For example: Library" value={newLineName} onChange={(e) => setNewLineName(e.target.value)} />
+                  {newLineName.trim() ? <span className={hint}>Identifier: {slugify(newLineName)}</span> : null}
                 </label>
               ) : null}
               <label className={label}>
-                Monto asignado en pesos
+                Allocated amount in pesos
                 <input className={field} inputMode="decimal" autoComplete="off" placeholder="500.000" value={budgetAmount} onChange={(e) => setBudgetAmount(e.target.value)} />
-                <span className={hint}>Es el total de la partida para el período, no lo que se suma.</span>
+                <span className={hint}>The line’s total for the period, not an increase.</span>
               </label>
               <label className={label}>
-                Fin del período
+                End of period
                 <input className={field} type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} />
               </label>
             </>
@@ -219,27 +209,27 @@ export function ProposeForm({ context, treasury, signer, name }: { context: Prop
             <>
               {vendors.length > 0 ? (
                 <label className={label}>
-                  Proveedor ya cargado (opcional)
+                  Existing vendor (optional)
                   <select className={field} defaultValue="" onChange={(e) => pickVendor(e.target.value)}>
-                    <option value="">Uno nuevo</option>
+                    <option value="">A new one</option>
                     {vendors.map((v) => (
                       <option key={v.address} value={v.address}>
-                        {v.legalName} {v.enabled ? "(habilitado)" : "(dado de baja)"}
+                        {v.legalName} {v.enabled ? "(enabled)" : "(removed)"}
                       </option>
                     ))}
                   </select>
                 </label>
               ) : null}
               <label className={label}>
-                Razón social
+                Legal name
                 <input className={field} maxLength={200} placeholder="Ferretería El Tornillo SRL" value={legalName} onChange={(e) => setLegalName(e.target.value)} />
               </label>
               <label className={label}>
-                CUIT
+                Tax ID (CUIT)
                 <input className={field} inputMode="numeric" autoComplete="off" placeholder="30-12345678-9" value={cuit} onChange={(e) => setCuit(e.target.value)} />
               </label>
               <label className={label}>
-                Cuenta donde cobra
+                Account that gets paid
                 {vendorPeople.length > 0 ? (
                   <select className={field} value={vendorPeople.some((p) => p.safeAddress === vendorAddress) ? vendorAddress : "other"} onChange={(e) => setVendorAddress(e.target.value === "other" ? "" : e.target.value)}>
                     {vendorPeople.map((p) => (
@@ -247,7 +237,7 @@ export function ProposeForm({ context, treasury, signer, name }: { context: Prop
                         {p.name} ({shortAddress(p.safeAddress)})
                       </option>
                     ))}
-                    <option value="other">Otra cuenta…</option>
+                    <option value="other">Another account…</option>
                   </select>
                 ) : null}
                 {!vendorPeople.some((p) => p.safeAddress === vendorAddress) ? (
@@ -261,22 +251,17 @@ export function ProposeForm({ context, treasury, signer, name }: { context: Prop
                     onChange={(e) => setVendorAddress(e.target.value)}
                   />
                 ) : null}
-                <span className={hint}>Si el proveedor ya creó su firma, elegilo de la lista.</span>
+                <span className={hint}>If the vendor already created their signature, pick them from the list.</span>
               </label>
               <fieldset className="grid grid-cols-2 gap-2">
-                <legend className="mb-1 text-sm font-medium">¿Qué querés hacer?</legend>
+                <legend className="mb-1 text-sm font-bold">What do you want to do?</legend>
                 {(
                   [
-                    [true, "Habilitar"],
-                    [false, "Dar de baja"],
+                    [true, "Enable"],
+                    [false, "Remove"],
                   ] as const
                 ).map(([value, text]) => (
-                  <label
-                    key={text}
-                    className={`flex min-h-12 cursor-pointer items-center justify-center rounded-xl border text-[15px] font-medium ${
-                      enabled === value ? "border-emerald-700 bg-emerald-50 text-emerald-950 dark:bg-emerald-950/40 dark:text-emerald-100" : "border-black/15 dark:border-white/20"
-                    }`}
-                  >
+                  <label key={text} className={chip(enabled === value)}>
                     <input type="radio" name="enabled" checked={enabled === value} onChange={() => setEnabled(value)} className="sr-only" />
                     {text}
                   </label>
@@ -287,26 +272,26 @@ export function ProposeForm({ context, treasury, signer, name }: { context: Prop
 
           {kind === "SetCaps" ? (
             <>
-              <p className="text-[15px] text-black/70 dark:text-white/70">
-                Hoy el agente paga solo hasta {formatPesos(caps.perTxCap)} por pago y {formatPesos(caps.vendorMonthlyCap)} por proveedor cada 30 días. Lo
-                que pasa de ahí necesita firmas.
+              <p className="text-[15px] text-muted">
+                Today the agent pays on its own up to {formatPesos(caps.perTxCap)} per payment and {formatPesos(caps.vendorMonthlyCap)} per vendor
+                every 30 days. Anything above that needs signatures.
               </p>
               <label className={label}>
-                Nuevo tope por pago, en pesos
+                New cap per payment, in pesos
                 <input className={field} inputMode="decimal" autoComplete="off" placeholder="50.000" value={perTxCap} onChange={(e) => setPerTxCap(e.target.value)} />
               </label>
               <label className={label}>
-                Nuevo tope por proveedor cada 30 días, en pesos
+                New cap per vendor every 30 days, in pesos
                 <input className={field} inputMode="decimal" autoComplete="off" placeholder="200.000" value={monthlyCap} onChange={(e) => setMonthlyCap(e.target.value)} />
               </label>
             </>
           ) : null}
 
           {kind === "Unpause" ? (
-            <p className="text-[15px] text-black/75 dark:text-white/75">
+            <p className="text-[15px] text-muted">
               {paused
-                ? "Los pagos están pausados. Si la comisión aprueba esta propuesta, vuelven a funcionar."
-                : "Los pagos no están pausados, así que no hace falta reanudarlos."}
+                ? "Payments are paused. If the board approves this proposal, they start again."
+                : "Payments are not paused, so there's nothing to resume."}
             </p>
           ) : null}
         </Card>
@@ -314,31 +299,31 @@ export function ProposeForm({ context, treasury, signer, name }: { context: Prop
 
       {review ? (
         <Card className="space-y-3">
-          <p className="text-sm text-black/60 dark:text-white/60">Vas a proponer</p>
-          <p className="text-lg leading-snug font-medium text-pretty">{review.summary}</p>
-          {review.meta.newLine ? <p className="text-[15px] text-black/70 dark:text-white/70">Es una partida nueva: «{review.meta.newLine.name}».</p> : null}
-          <p className="text-[15px] text-black/70 dark:text-white/70">Se aplica cuando firme la cantidad de personas que pide la cooperadora.</p>
+          <p className="text-sm font-bold text-muted">You’re about to propose</p>
+          <p className="text-lg leading-snug font-bold text-pretty">{review.summary}</p>
+          {review.meta.newLine ? <p className="text-[15px] text-muted">It’s a new line: “{review.meta.newLine.name}”.</p> : null}
+          <p className="text-[15px] text-muted">It applies once enough people have signed, as the co-op requires.</p>
           <Button onClick={() => void submit(review)} disabled={state.status === "working"}>
-            {state.status === "working" ? "Firmando…" : "Firmar y proponer"}
+            {state.status === "working" ? "Signing…" : "Sign and propose"}
           </Button>
           <Button variant="secondary" onClick={() => setReview(null)} disabled={state.status === "working"}>
-            Cambiar algo
+            Change something
           </Button>
         </Card>
       ) : (
         <div className="space-y-2">
           <Button onClick={startReview} disabled={kind === "Unpause" && !paused}>
-            Revisar
+            Review
           </Button>
           {error ? <Notice tone="warn">{error}</Notice> : null}
         </div>
       )}
 
-      <ActionStatus state={state} doneText="Listo." />
+      <ActionStatus state={state} doneText="Done." />
 
       {!paused && editing ? (
-        <div className="border-t border-black/10 pt-5 dark:border-white/10">
-          <p className="mb-3 text-[15px] text-black/70 dark:text-white/70">¿Algo no está bien? Cualquier firmante puede frenar todos los pagos.</p>
+        <div className="border-t-[3px] border-ink pt-5">
+          <p className="mb-3 text-[15px] text-muted">Something wrong? Any signer can stop every payment.</p>
           <PauseButton treasury={treasury} signer={signer} />
         </div>
       ) : null}

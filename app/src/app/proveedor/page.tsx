@@ -12,7 +12,7 @@ type Props = { searchParams: Promise<Record<string, string | string[] | undefine
 
 export default function VendorPage(props: Props) {
   return (
-    <Suspense fallback={<Loading label="Buscando tus cobros…" />}>
+    <Suspense fallback={<Loading label="Finding your payments…" />}>
       <Vendor {...props} />
     </Suspense>
   );
@@ -31,12 +31,12 @@ async function load(token: string | null): Promise<Loaded> {
     const { link, credential, safe } = session;
     if (!credential || !safe) return { ok: true, enroll: { token: token!, name: link.person.name, rpId: env().RP_ID } };
     const view = await loadVendorView(db, chainReader, link.person.id, safe);
-    if (!view) return { ok: false, message: "No encontramos tus datos de proveedor. Avisale a la comisión de la cooperadora." };
+    if (!view) return { ok: false, message: "We couldn't find your vendor details. Let the co-op's board know." };
     const [config, wars] = await Promise.all([pageChainConfig(), warsAddress()]);
     return { ok: true, panel: { view, wars, name: link.person.name, signer: { token: token!, credential, safe, ...config } } };
   } catch (error) {
     console.error(error);
-    return { ok: false, message: "No pudimos cargar tus cobros. Probá de nuevo en un rato." };
+    return { ok: false, message: "We couldn't load your payments. Try again in a bit." };
   }
 }
 
@@ -46,9 +46,9 @@ async function Vendor({ searchParams }: Props) {
   if ("panel" in loaded) return <VendorPanel {...loaded.panel} />;
   return (
     <div className="space-y-5">
-      <PageTitle eyebrow={`Hola, ${loaded.enroll.name}`}>Creá tu firma para cobrar</PageTitle>
-      <p className="text-[15px] leading-relaxed text-black/75 dark:text-white/75">
-        Para ver y retirar tus cobros vas a crear una firma con la huella, la cara o el PIN de este teléfono. No tiene costo.
+      <PageTitle eyebrow={`Hi, ${loaded.enroll.name}`}>Create your signature to get paid</PageTitle>
+      <p className="text-[15px] leading-relaxed text-muted">
+        To see and withdraw your payments you’ll create a signature with this phone’s fingerprint, face or PIN. It’s free.
       </p>
       <VendorEnroll {...loaded.enroll} />
     </div>

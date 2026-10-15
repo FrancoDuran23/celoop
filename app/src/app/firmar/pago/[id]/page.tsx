@@ -14,7 +14,7 @@ type Props = {
 
 export default function PaymentPage(props: Props) {
   return (
-    <Suspense fallback={<Loading label="Buscando el pago…" />}>
+    <Suspense fallback={<Loading label="Finding the payment…" />}>
       <Payment {...props} />
     </Suspense>
   );
@@ -23,7 +23,7 @@ export default function PaymentPage(props: Props) {
 type Loaded = { ok: true; props: Parameters<typeof PaymentSigner>[0] } | { ok: false; message: string };
 
 async function load(id: string, token: string | null): Promise<Loaded> {
-  if (!/^\d{1,20}$/.test(id)) return { ok: false, message: "No encontramos este pago." };
+  if (!/^\d{1,20}$/.test(id)) return { ok: false, message: "We couldn't find this payment." };
   const paymentId = BigInt(id);
   try {
     const db = getDb();
@@ -32,7 +32,7 @@ async function load(id: string, token: string | null): Promise<Loaded> {
     if (!linkAllows(session.link, "payment", paymentId)) return { ok: false, message: linkErrorMessage("wrong_target") };
     if (!session.credential || !session.safe) return { ok: false, message: NO_PASSKEY_MESSAGE };
     const [view, config] = await Promise.all([loadPaymentView(db, chainReader, paymentId, session.safe), pageChainConfig()]);
-    if (!view) return { ok: false, message: "No encontramos este pago. Puede que el link sea viejo." };
+    if (!view) return { ok: false, message: "We couldn't find this payment. The link may be old." };
     return {
       ok: true,
       props: {
@@ -44,7 +44,7 @@ async function load(id: string, token: string | null): Promise<Loaded> {
     };
   } catch (error) {
     console.error(error);
-    return { ok: false, message: "No pudimos cargar el pago. Probá de nuevo en un rato." };
+    return { ok: false, message: "We couldn't load the payment. Try again in a bit." };
   }
 }
 

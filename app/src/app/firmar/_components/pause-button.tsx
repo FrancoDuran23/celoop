@@ -10,29 +10,29 @@ import { useSafeAction, type SignerConfig } from "./use-safe-action";
 export function PauseButton({ treasury, signer, disabled }: { treasury: Address; signer: SignerConfig; disabled?: boolean }) {
   const { state, run } = useSafeAction(signer);
   const [confirming, setConfirming] = useState(false);
-  if (state.status === "done") return <ActionStatus state={state} doneText="Listo. Los pagos quedaron pausados." />;
+  if (state.status === "done") return <ActionStatus state={state} doneText="Done. Payments are paused." />;
   return (
     <div className="space-y-3">
       {confirming ? (
         <Card className="space-y-3">
-          <p className="font-semibold">¿Pausar todos los pagos?</p>
-          <p className="text-[15px] text-black/70 dark:text-white/70">
-            Se frenan los pagos automáticos y los firmados hasta que la comisión apruebe reanudarlos. Usalo si algo no está bien.
+          <p className="font-extrabold">Pause all payments?</p>
+          <p className="text-[15px] text-muted">
+            Automatic and signed payments stop until the board approves resuming them. Use it if something looks wrong.
           </p>
           <Button
             variant="danger"
             disabled={disabled || state.status === "working"}
             onClick={() => void run([{ to: treasury, data: encodeFunctionData({ abi: treasuryPolicyAbi, functionName: "pause" }) }])}
           >
-            {state.status === "working" ? "Pausando…" : "Sí, pausar los pagos"}
+            {state.status === "working" ? "Pausing…" : "Yes, pause payments"}
           </Button>
           <Button variant="secondary" onClick={() => setConfirming(false)} disabled={state.status === "working"}>
-            Volver
+            Back
           </Button>
         </Card>
       ) : (
         <Button variant="danger" onClick={() => setConfirming(true)} disabled={disabled}>
-          Pausar todos los pagos
+          Pause all payments
         </Button>
       )}
       <ActionStatus state={state} doneText="" />

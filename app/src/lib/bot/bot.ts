@@ -19,7 +19,7 @@ import {
   type Person,
 } from "@/lib/orchestrator/people";
 import { listForReview, resolveReview } from "@/lib/orchestrator/review";
-import { periodLabel } from "@/lib/report/format";
+import { periodLabelEs } from "@/lib/report/format";
 import type { Assistant } from "./assistant";
 import { MENU, matchMenu, menuActions, menuKeyboard, type MenuAction } from "./menu";
 import type { InlineButton } from "./notify";
@@ -317,7 +317,7 @@ export function createBot(opts: { token: string; botInfo?: UserFromGetMe; deps: 
         const url = await reviewUrl(db, deps.appUrl, p.id, draft.period, deps.now());
         return deps.notify(
           p.id,
-          `La rendición de ${periodLabel(draft.period)} está en borrador. Revisala y, si está bien, dale el visto bueno desde la página.`,
+          `La rendición de ${periodLabelEs(draft.period)} está en borrador. Revisala y, si está bien, dale el visto bueno desde la página.`,
           [[{ text: "Revisar rendición", url }]],
         );
       }

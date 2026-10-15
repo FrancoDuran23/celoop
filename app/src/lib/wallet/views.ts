@@ -22,11 +22,11 @@ export type ChainReader = {
 
 const lowerEq = (column: AnyColumn, value: string) => sql`lower(${column}) = ${value.toLowerCase()}`;
 
-const INVOICE_TYPES: Record<number, string> = { 1: "Factura A", 6: "Factura B", 11: "Factura C" };
+const INVOICE_TYPES: Record<number, string> = { 1: "Invoice A", 6: "Invoice B", 11: "Invoice C" };
 
 export function invoiceLabel(inv: { tipo: number | null; ptoVta: number | null; nro: bigint | null }): string | null {
   if (inv.ptoVta === null || inv.nro === null) return null;
-  const kind = (inv.tipo !== null && INVOICE_TYPES[inv.tipo]) || "Comprobante";
+  const kind = (inv.tipo !== null && INVOICE_TYPES[inv.tipo]) || "Voucher";
   return `${kind} ${String(inv.ptoVta).padStart(5, "0")}-${String(inv.nro).padStart(8, "0")}`;
 }
 
@@ -73,11 +73,11 @@ export async function loadPaymentView(db: Db, chain: ChainReader, paymentId: big
   return {
     paymentId: paymentId.toString(),
     status: onchain.status as PaymentView["status"],
-    vendorName: vendor?.legalName ?? "Proveedor sin nombre",
+    vendorName: vendor?.legalName ?? "Unnamed vendor",
     vendorAddress: onchain.vendor,
     cuit: (vendor?.cuit ?? invoice?.cuit)?.toString() ?? null,
     amount: onchain.amount.toString(),
-    lineName: names.get(onchain.lineId.toLowerCase()) ?? "Partida sin nombre",
+    lineName: names.get(onchain.lineId.toLowerCase()) ?? "Unnamed budget line",
     invoiceUrl: invoice?.fileUrl ?? null,
     invoiceLabel: invoice ? invoiceLabel(invoice) : null,
     approvals: Number(onchain.approvals),

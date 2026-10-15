@@ -54,7 +54,7 @@ describe("loadPaymentView", () => {
       cuit: "20123456789",
       lineName: "Mantenimiento",
       invoiceUrl: "https://blob/factura.pdf",
-      invoiceLabel: "Factura C 00002-00000345",
+      invoiceLabel: "Invoice C 00002-00000345",
       approvals: 1,
       threshold: 2,
       overBudget: true,
@@ -80,7 +80,7 @@ describe("loadProposalView", () => {
     const view = await loadProposalView(db, chain, BigInt(5), SIGNER_SAFE);
     expect(view).toMatchObject({
       kind: "SetVendor",
-      summary: "Habilitar al proveedor Ferretería SRL (CUIT 30-50001091-2).",
+      summary: "Enable the vendor Ferretería SRL (tax ID 30-50001091-2).",
       status: "open",
       approvals: 1,
       threshold: 2,
