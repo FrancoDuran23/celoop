@@ -155,7 +155,7 @@ El PDF del agente se arma hoy con la estructura de la planilla del Programa Coop
 
 > [Lugar], [fecha]
 >
-> La Asociación Cooperadora de la [Escuela], inscripta en el RUCE con el n.º [ ], manifiesta su interés en conocer y eventualmente probar la herramienta "Cooperadora Abierta", en desarrollo por Franco Durán, para la gestión de aportes, pagos a proveedores y rendición de cuentas.
+> La Asociación Cooperadora de la [Escuela], inscripta en el RUCE con el n.º [ ], manifiesta su interés en conocer y eventualmente probar la herramienta "Cooperadora Segura", en desarrollo por Franco Durán, para la gestión de aportes, pagos a proveedores y rendición de cuentas.
 >
 > Hoy la tesorería se lleva [cómo lo hacen] y la rendición nos insume [tiempo]. Nos interesa especialmente [lo que más les importó en la entrevista].
 >

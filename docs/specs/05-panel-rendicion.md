@@ -78,7 +78,7 @@ Tiene que ser determinista y testeado.
 **PDF:**
 - Se genera con `@react-pdf/renderer`, en A4 vertical.
 - Lleva una tabla de egresos con todas sus columnas, totales y un espacio para firmas.
-- El pie dice "Generado por Cooperadora Abierta. Verificable en <APP_URL>".
+- El pie dice "Generado por Cooperadora Segura. Verificable en <APP_URL>".
 
 ## Aceptación
 

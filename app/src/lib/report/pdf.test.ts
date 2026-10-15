@@ -3,6 +3,7 @@ import { createTestDb } from "@/db/testing";
 import { buildReport } from "./build";
 import { renderReportPdf } from "./pdf";
 import { seedReportData } from "./test-seed";
+import { APP_NAME } from "@/lib/brand";
 
 async function pdfText(bytes: Uint8Array): Promise<string> {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
@@ -28,6 +29,6 @@ test("the PDF is generated and contains totals, header and footer", async () => 
   expect(text).toContain("$ 9.000,00"); // total expenses
   expect(text).toContain("$ 8.500,00"); // closing balance
   expect(text).toContain("Librería El Aula");
-  expect(text).toContain("Generado por Cooperadora Abierta. Verificable en https://cooperadora.example");
+  expect(text).toContain(`Generado por ${APP_NAME}. Verificable en https://cooperadora.example`);
   expect(text).not.toContain("Marta");
 });

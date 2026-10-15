@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 import { TelegramGate } from "./_components/telegram-gate";
+import { APP_NAME } from "@/lib/brand";
 
 export const metadata: Metadata = {
-  title: "Firmar · Cooperadora Abierta",
+  title: `Firmar · ${APP_NAME}`,
   robots: { index: false, follow: false },
 };
 

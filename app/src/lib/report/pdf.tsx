@@ -5,6 +5,7 @@ import {
 } from "./columns";
 import { formatPesos } from "./format";
 import type { IncomeConcept, ReportData } from "./types";
+import { APP_NAME } from "@/lib/brand";
 
 const ink = "#1f2933";
 const muted = "#52606d";
@@ -70,7 +71,7 @@ export function ReportPdf({ report, appUrl }: { report: ReportData; appUrl: stri
   const h = report.header;
   const concepts = Object.keys(INCOME_CONCEPT_LABEL) as IncomeConcept[];
   return (
-    <Document title={`Rendición ${report.periodLabel} - ${h.cooperadora}`} author="Cooperadora Abierta">
+    <Document title={`Rendición ${report.periodLabel} - ${h.cooperadora}`} author={APP_NAME}>
       <Page size="A4" style={s.page}>
         <Text style={s.title}>Rendición mensual de cuentas</Text>
         <Text style={s.subtitle}>{report.periodLabel}</Text>
@@ -113,7 +114,7 @@ export function ReportPdf({ report, appUrl }: { report: ReportData; appUrl: stri
         </View>
 
         <View style={s.footer} fixed>
-          <Text>Generado por Cooperadora Abierta. Verificable en {appUrl}</Text>
+          <Text>Generado por {APP_NAME}. Verificable en {appUrl}</Text>
           <Text render={({ pageNumber, totalPages }) => `Página ${pageNumber} de ${totalPages}`} />
         </View>
       </Page>

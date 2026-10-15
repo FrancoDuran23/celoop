@@ -22,6 +22,7 @@ import { publicClient } from "@/lib/chain/clients";
 import { resetEnv } from "@/lib/env";
 import { APP_DIR, openScriptDb } from "./db";
 import { chainName, checkNode, EXPECTED_CHAIN_ID, LOCAL_RPC, safetyCut } from "./guard";
+import { APP_NAME } from "@/lib/brand";
 
 export const IDENTITY_REGISTRY: Record<number, Address> = {
   [EXPECTED_CHAIN_ID.mainnet]: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
@@ -139,7 +140,7 @@ export async function registerAgent(opts: RegisterOptions = {}): Promise<Registe
   const handle = await openScriptDb({ db: opts.db, databaseUrl: get("DATABASE_URL"), log });
   try {
     const [coop] = await handle.db.select().from(cooperadora).catch(() => []);
-    const name = get("AGENT_NAME") ?? (coop ? `Tesorero de ${coop.name}` : "Cooperadora Abierta");
+    const name = get("AGENT_NAME") ?? (coop ? `Tesorero de ${coop.name}` : APP_NAME);
     const description =
       get("AGENT_DESCRIPTION") ??
       `Agente tesorero${coop ? ` de ${coop.name} (${coop.school})` : " de una cooperadora escolar argentina"}. ` +

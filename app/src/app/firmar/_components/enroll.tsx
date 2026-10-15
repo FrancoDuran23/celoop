@@ -4,6 +4,7 @@ import { useState } from "react";
 import { createWebAuthnCredential } from "viem/account-abstraction";
 import { shortAddress } from "@/lib/wallet/format";
 import { Button, Card, Notice } from "./ui";
+import { APP_NAME } from "@/lib/brand";
 
 type State = { status: "idle" } | { status: "working" } | { status: "done"; safe: string } | { status: "error"; message: string };
 
@@ -16,7 +17,7 @@ export function EnrollPasskey({ token, name, rpId, onDone }: { token: string; na
     try {
       credential = await createWebAuthnCredential({
         name: `${name} · Cooperadora`,
-        rp: { id: rpId, name: "Cooperadora Abierta" },
+        rp: { id: rpId, name: APP_NAME },
       });
     } catch (error) {
       console.error(error);

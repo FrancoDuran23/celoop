@@ -1,4 +1,4 @@
-# SDD — Cooperadora Abierta
+# SDD — Cooperadora Segura
 
 Agente tesorero para cooperadoras escolares. Versión 2, 14 de octubre de 2026, @Franco. Reemplaza al SDD del mismo día con las decisiones de la sesión de revisión.
 
@@ -6,13 +6,13 @@ Se presenta al track 1 (Stable Agents: LatAm, Ripio × Celo) del hackathon Agent
 
 ## 1. Resumen
 
-Cooperadora Abierta cobra los aportes de los socios en wARS, paga a proveedores solo lo que el presupuesto votado permite y genera la rendición de cuentas sola. Las reglas viven en un contrato; el agente ejecuta lo que la comisión aprobó y no puede salirse de eso.
+Cooperadora Segura cobra los aportes de los socios en wARS, paga a proveedores solo lo que el presupuesto votado permite y genera la rendición de cuentas sola. Las reglas viven en un contrato; el agente ejecuta lo que la comisión aprobó y no puede salirse de eso.
 
 **Problema.** La plata de una cooperadora la manejan una o dos personas con efectivo, un CBU y planillas Excel. Hay casos judiciales por desvío de fondos, y la rendición la hacen voluntarios a mano.
 
 **Tesis.** Las reglas son firmes pero se pueden cambiar con firmas, y todo cambio queda público con su motivo. Nada se mueve sin que se vea, y nada grande se mueve sin una segunda persona.
 
-**Diferencial frente a TesorerIA**, el competidor más cercano en este track: TesorerIA es el fondo de un grupo de amigos. Cooperadora Abierta es para una institución con presupuesto votado en asamblea, facturas a su nombre, revisor de cuentas y rendición ante el Estado. Además la cuota es voluntaria por ley, así que el agente nunca cobra deudas.
+**Diferencial frente a TesorerIA**, el competidor más cercano en este track: TesorerIA es el fondo de un grupo de amigos. Cooperadora Segura es para una institución con presupuesto votado en asamblea, facturas a su nombre, revisor de cuentas y rendición ante el Estado. Además la cuota es voluntaria por ley, así que el agente nunca cobra deudas.
 
 ## 2. Roles
 

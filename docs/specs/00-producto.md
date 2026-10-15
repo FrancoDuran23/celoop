@@ -1,4 +1,4 @@
-# Spec — Cooperadora Abierta (MVP del hackathon)
+# Spec — Cooperadora Segura (MVP del hackathon)
 
 Diseño técnico de referencia en `docs/sdd.md`.
 

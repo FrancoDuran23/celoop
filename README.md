@@ -1,4 +1,4 @@
-# Cooperadora Abierta
+# Cooperadora Segura
 
 Agente tesorero para cooperadoras escolares argentinas, sobre Celo y con wARS. El diseño está en [`docs/sdd.md`](docs/sdd.md) y las specs por módulo en [`docs/specs/`](docs/specs/README.md).
 
