@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { Metadata, Viewport } from "next";
 import { Nunito } from "next/font/google";
 import "./globals.css";
@@ -19,7 +20,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`h-full antialiased ${nunito.variable}`}>
       <body className="flex min-h-full flex-col">
-        <SiteHeader />
+        <Suspense fallback={null}>
+          <SiteHeader />
+        </Suspense>
         <div className="flex-1">{children}</div>
         <footer className="relative z-10 border-t-[3px] border-ink bg-surface">
           <div className="mx-auto flex max-w-5xl flex-col items-start gap-3 px-4 py-6 text-sm sm:flex-row sm:items-center sm:justify-between">
