@@ -8,6 +8,13 @@
       "when": 1792012810624,
       "tag": "0000_long_garia",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792076349362,
+      "tag": "0001_brief_blob",
+      "breakpoints": true
     }
   ]
 }

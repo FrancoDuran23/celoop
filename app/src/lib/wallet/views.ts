@@ -3,7 +3,7 @@
 import { and, desc, eq, isNotNull, sql, type AnyColumn } from "drizzle-orm";
 import type { Address, Hex, TransactionReceipt } from "viem";
 import type { Db } from "@/db";
-import { budgetIndex, budgetLines, invoices, payments, persons, proposals, vendors } from "@/db/schema";
+import { audits, budgetIndex, budgetLines, invoices, payments, persons, proposals, vendors } from "@/db/schema";
 import { decodeProposal, describeProposal, proposalKindName, type ProposalKindName } from "./proposals";
 
 export type ChainReader = {
@@ -53,6 +53,8 @@ export type PaymentView = {
   lineAvailable: string;
   paused: boolean;
   alreadyApproved: boolean;
+  /** What the auditor said, for the signer to read before signing. Null = not reviewed. */
+  audit: { verdict: "cleared" | "flagged"; observations: string[]; reportUrl: string } | null;
 };
 
 export async function loadPaymentView(db: Db, chain: ChainReader, paymentId: bigint, signer: Address | null): Promise<PaymentView | null> {
@@ -70,6 +72,7 @@ export async function loadPaymentView(db: Db, chain: ChainReader, paymentId: big
   const vendor = vendorRows[0];
   const invoice = invoiceRows[0];
   const available = budget.allocated - budget.spent;
+  const [auditRow] = await db.select().from(audits).where(eq(audits.paymentId, paymentId)).limit(1);
   return {
     paymentId: paymentId.toString(),
     status: onchain.status as PaymentView["status"],
@@ -86,6 +89,13 @@ export async function loadPaymentView(db: Db, chain: ChainReader, paymentId: big
     lineAvailable: available.toString(),
     paused,
     alreadyApproved,
+    audit: auditRow
+      ? {
+          verdict: auditRow.verdict === "flagged" ? "flagged" : "cleared",
+          observations: (auditRow.findings as { level: string; text: string }[]).filter((f) => f.level === "observacion").map((f) => f.text),
+          reportUrl: `/auditoria/${paymentId}`,
+        }
+      : null,
   };
 }
 

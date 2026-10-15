@@ -163,7 +163,25 @@ export const payments = pgTable("payments", {
   proposedTxHash: text("proposed_tx_hash"),
   executedTxHash: text("executed_tx_hash"),
   executedAt: timestamp("executed_at", { withTimezone: true }),
+  /** The auditor's verdict as recorded on chain (PaymentAudited): cleared | flagged. Null = not audited. */
+  audit: text("audit"),
+  auditReportHash: text("audit_report_hash"),
+  auditTxHash: text("audit_tx_hash"),
   updatedAt: updatedAt(),
+});
+
+/**
+ * The auditor's own record of each review. `reportJson` is the exact text whose keccak256 the
+ * auditor sends with auditPayment, so anyone can fetch it and check the hash on chain.
+ * Findings: [{ code, level: "observacion" | "nota", text }]. An observación sends the payment to signers.
+ */
+export const audits = pgTable("audits", {
+  paymentId: bigint("payment_id", { mode: "bigint" }).primaryKey(),
+  verdict: text("verdict").notNull(), // cleared | flagged
+  findings: jsonb("findings").notNull(),
+  reportJson: text("report_json").notNull(),
+  reportHash: text("report_hash").notNull(),
+  createdAt: createdAt(),
 });
 
 /** Index of configuration proposals. reasonText is the human motive (its hash is on chain for moves). */

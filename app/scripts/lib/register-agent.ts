@@ -1,4 +1,6 @@
 // ERC-8004: registers the agent in the Identity Registry and writes its registration file.
+// The treasurer and the auditor are two agents with two identities: `role: "auditor"` registers
+// the auditor with its own key (AUDITOR_PRIVATE_KEY) and its own file (auditor-registration.json).
 //
 // Format verified against EIP-8004 (eips.ethereum.org/EIPS/eip-8004) and
 // docs.celo.org/build-on-celo/build-with-ai/8004:
@@ -18,6 +20,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import type { Db } from "@/db";
 import { agentTxs, cooperadora } from "@/db/schema";
 import { sendAgentTx } from "@/lib/chain/agent";
+import { agentAccount, auditorAccount } from "@/lib/chain/clients";
 import { publicClient } from "@/lib/chain/clients";
 import { resetEnv } from "@/lib/env";
 import { APP_DIR, openScriptDb } from "./db";
@@ -31,6 +34,14 @@ export const IDENTITY_REGISTRY: Record<number, Address> = {
 
 export const REGISTRATION_TYPE = "https://eips.ethereum.org/EIPS/eip-8004#registration-v1";
 export const DEFAULT_REGISTRATION_FILE = path.join(APP_DIR, "public/agent-registration.json");
+export const AUDITOR_REGISTRATION_FILE = path.join(APP_DIR, "public/auditor-registration.json");
+
+export type AgentRole = "treasurer" | "auditor";
+
+const ROLE = {
+  treasurer: { keyVar: "AGENT_PRIVATE_KEY", file: "agent-registration.json", nameVar: "AGENT_NAME", descriptionVar: "AGENT_DESCRIPTION" },
+  auditor: { keyVar: "AUDITOR_PRIVATE_KEY", file: "auditor-registration.json", nameVar: "AUDITOR_NAME", descriptionVar: "AUDITOR_DESCRIPTION" },
+} as const;
 
 export const identityRegistryAbi = parseAbi([
   "function register(string agentURI) returns (uint256 agentId)",
@@ -86,6 +97,8 @@ export type RegisterOptions = {
   dryRun?: boolean;
   /** Register again even if the agent already owns an identity. */
   force?: boolean;
+  /** Which of the two agents. Default: the treasurer. */
+  role?: AgentRole;
   env?: Record<string, string | undefined>;
   db?: Db;
   outFile?: string;
@@ -102,14 +115,16 @@ export async function registerAgent(opts: RegisterOptions = {}): Promise<Registe
   const get = (k: string) => (e[k]?.trim() ? e[k]!.trim() : undefined);
   const chain = chainName(get("CHAIN"));
   const rpcUrl = get("RPC_URL") ?? (chain === "local" ? LOCAL_RPC : undefined);
-  const agentKey = get("AGENT_PRIVATE_KEY") as Hex | undefined;
-  if (!agentKey) throw new Error("Falta AGENT_PRIVATE_KEY: la identidad queda a nombre de la cuenta del agente.");
+  const role = opts.role ?? "treasurer";
+  const r = ROLE[role];
+  const agentKey = get(r.keyVar) as Hex | undefined;
+  if (!agentKey) throw new Error(`Falta ${r.keyVar}: la identidad queda a nombre de esa cuenta.`);
   const agent = privateKeyToAccount(agentKey).address;
   const appUrl = get("APP_URL") ?? "http://localhost:3000";
-  const agentURI = `${base(appUrl)}/agent-registration.json`;
+  const agentURI = `${base(appUrl)}/${r.file}`;
   const attributionCode = get("ATTRIBUTION_CODE");
 
-  log(`Registro ERC-8004 del agente ${agent}`);
+  log(`Registro ERC-8004 del ${role === "auditor" ? "auditor" : "agente tesorero"} ${agent}`);
   log(`  Red: ${chain} · RPC ${rpcUrl ?? "(falta RPC_URL)"}`);
   log(`  URI del registro: ${agentURI}`);
 
@@ -123,7 +138,7 @@ export async function registerAgent(opts: RegisterOptions = {}): Promise<Registe
   resetEnv({
     CHAIN: chain,
     RPC_URL: rpcUrl,
-    AGENT_PRIVATE_KEY: agentKey,
+    [r.keyVar]: agentKey,
     ATTRIBUTION_CODE: attributionCode ?? "",
     AGENT_SEND: opts.dryRun ? "off" : "on",
     FEE_CURRENCY: get("FEE_CURRENCY") ?? "",
@@ -140,21 +155,29 @@ export async function registerAgent(opts: RegisterOptions = {}): Promise<Registe
   const handle = await openScriptDb({ db: opts.db, databaseUrl: get("DATABASE_URL"), log });
   try {
     const [coop] = await handle.db.select().from(cooperadora).catch(() => []);
-    const name = get("AGENT_NAME") ?? (coop ? `Tesorero de ${coop.name}` : APP_NAME);
+    const of = coop ? ` de ${coop.name} (${coop.school})` : " de una cooperadora escolar argentina";
+    const name =
+      get(r.nameVar) ?? (coop ? `${role === "auditor" ? "Auditor" : "Tesorero"} de ${coop.name}` : `${APP_NAME}${role === "auditor" ? " (auditor)" : ""}`);
     const description =
-      get("AGENT_DESCRIPTION") ??
-      `Agente tesorero${coop ? ` de ${coop.name} (${coop.school})` : " de una cooperadora escolar argentina"}. ` +
-        "Lee las facturas que carga la comisión, paga a proveedores habilitados dentro de las reglas del contrato " +
-        "(lo que las excede lo firman las personas), recibe los aportes de los socios en wARS y publica la rendición mensual. " +
-        "Se usa por Telegram.";
+      get(r.descriptionVar) ??
+      (role === "auditor"
+        ? `Agente auditor${of}. Revisa cada pago que propone el agente tesorero antes de que salga: vuelve a leer el QR de la factura, ` +
+          "compara el archivo y el monto con lo que está en el contrato y busca compras partidas o facturas repetidas. " +
+          "Con su propia clave solo puede aprobar u observar un pago: lo observado lo deciden las personas que firman. " +
+          "Una vez por día verifica que el saldo del tesoro coincida con los movimientos registrados. Publica un informe por pago."
+        : `Agente tesorero${of}. ` +
+          "Lee las facturas que carga la comisión, paga a proveedores habilitados dentro de las reglas del contrato " +
+          "(lo que las excede lo firman las personas, y lo chico lo revisa antes el agente auditor), recibe los aportes de los socios en wARS y publica la rendición mensual. " +
+          "Se usa por Telegram.");
     const fileArgs = { name, description, appUrl, agent, chainId, registry, telegramBot: get("TELEGRAM_BOT_USERNAME") };
-    const outFile = opts.outFile ?? DEFAULT_REGISTRATION_FILE;
+    const outFile = opts.outFile ?? (role === "auditor" ? AUDITOR_REGISTRATION_FILE : DEFAULT_REGISTRATION_FILE);
     const write = (file: RegistrationFile) => {
       mkdirSync(path.dirname(outFile), { recursive: true });
       writeFileSync(outFile, `${JSON.stringify(file, null, 2)}\n`);
     };
 
-    const key = `register:erc8004:${chainId}:${registry.toLowerCase()}`;
+    // The treasurer keeps the key it always had; the auditor gets its own.
+    const key = `register:erc8004:${role === "auditor" ? "auditor:" : ""}${chainId}:${registry.toLowerCase()}`;
     const owned = await client.readContract({ address: registry, abi: identityRegistryAbi, functionName: "balanceOf", args: [agent] });
     if (owned > BigInt(0) && !opts.force) {
       const [row] = await handle.db.select().from(agentTxs).where(eq(agentTxs.key, key));
@@ -168,7 +191,8 @@ export async function registerAgent(opts: RegisterOptions = {}): Promise<Registe
     const preliminary = registrationFile(fileArgs);
     write(preliminary);
     const data = encodeFunctionData({ abi: identityRegistryAbi, functionName: "register", args: [agentURI] });
-    const sent = await sendAgentTx({ key, kind: "register", to: registry, data }, { db: handle.db });
+    const account = role === "auditor" ? auditorAccount() : agentAccount();
+    const sent = await sendAgentTx({ key, kind: "register", to: registry, data }, { db: handle.db, account });
     if ("dryRun" in sent) {
       const message = "Simulación OK: el registro saldría bien. No se envió nada (--dry-run).";
       log(message);
@@ -191,7 +215,7 @@ export async function registerAgent(opts: RegisterOptions = {}): Promise<Registe
     write(file);
     log(`Agente registrado: agentId ${agentId} (tx ${sent.txHash}).`);
     log(`Archivo de registro: ${outFile}. Publicalo en ${agentURI} (va en app/public).`);
-    log(`AGENT_ID=${agentId}`);
+    log(`${role === "auditor" ? "AUDITOR_ID" : "AGENT_ID"}=${agentId}`);
     return { status: "registered", agentId, txHash: sent.txHash, agentURI, file, outFile };
   } finally {
     await handle.close();

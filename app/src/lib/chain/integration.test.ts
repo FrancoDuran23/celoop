@@ -11,6 +11,7 @@ import {
   http,
   keccak256,
   toHex,
+  zeroAddress,
   type Abi,
   type Address,
   type Hex,
@@ -90,6 +91,7 @@ describe.skipIf(skipReason !== null)("chain module against anvil + module 01 con
       wars(50_000),
       wars(200_000),
       keccak256(toHex("acta")),
+      zeroAddress, // no auditor: automatic payments go out on proposal
     ]);
     treasury = t.address;
     factory = (await deploy(ARTIFACTS.factory, [treasury, token])).address;

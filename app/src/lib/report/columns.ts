@@ -28,6 +28,8 @@ export const INCOME_CONCEPT_LABEL: Record<IncomeConcept, string> = {
 
 export const RULE_LABEL = { auto: "Automatic (within the cap)", signers: "Signed" } as const;
 
+export const AUDIT_LABEL = { cleared: "Revisado sin observaciones", flagged: "Observado" } as const;
+
 export const incomeColumns: Column<IncomeRow>[] = [
   { key: "date", header: "Date", flex: 1.2, value: (r) => formatDate(r.date) },
   { key: "concept", header: "Concept", flex: 3, value: (r) => INCOME_CONCEPT_LABEL[r.concept] },
@@ -56,6 +58,10 @@ export const expenseColumns: Column<ExpenseRow>[] = [
       const flags = [r.overBudget ? "exceeded its line" : "", r.budgetExpired ? "expired budget" : ""].filter(Boolean);
       return [RULE_LABEL[r.rule], ...flags].join(" - ");
     },
+  },
+  {
+    key: "audit", header: "Auditor", flex: 1.6,
+    value: (r) => (r.audit ? AUDIT_LABEL[r.audit] : "-"),
   },
 ];
 

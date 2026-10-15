@@ -129,11 +129,14 @@ export function PanelView({ data }: { data: PanelData | null }) {
                   {e.rule === "auto" ? "Automatic (within the cap)" : `Signed (${e.approvals} of ${e.signerCount})`}
                 </p>
                 <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1">
+                  {e.audit === "cleared" ? <Tag tone="ok">Reviewed by the auditor</Tag> : null}
+                  {e.audit === "flagged" ? <Tag tone="warn">Flagged by the auditor</Tag> : null}
                   {e.overBudget ? <Tag tone="danger">Exceeded its line</Tag> : null}
                   {e.budgetExpired ? <Tag tone="warn">Expired budget</Tag> : null}
                   {e.invoiceUrl ? (
                     <a href={e.invoiceUrl} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold">View invoice</a>
                   ) : null}
+                  {e.audit ? <a href={`/auditoria/${e.paymentId}`} className="text-sm font-semibold">Auditor’s report</a> : null}
                   <TxLink txHash={e.txHash} chainId={header.chainId} />
                 </div>
               </li>
@@ -158,6 +161,12 @@ export function PanelView({ data }: { data: PanelData | null }) {
                   Has {p.approvals} {p.approvals === 1 ? "signature" : "signatures"}
                   {p.missing > 0 ? `, ${p.missing} more needed.` : ", enough to go ahead."}
                 </p>
+                {p.audit ? (
+                  <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1">
+                    {p.audit === "flagged" ? <Tag tone="warn">Flagged by the auditor</Tag> : <Tag tone="ok">Reviewed by the auditor</Tag>}
+                    <a href={`/auditoria/${p.paymentId}`} className="text-sm font-semibold">Auditor’s report</a>
+                  </div>
+                ) : null}
               </li>
             ))}
           </ul>

@@ -80,8 +80,25 @@ export class FakeReader {
   }
 }
 
-/** Pays on the spot under PER_TX_CAP (like the contract's auto rule), otherwise leaves it pending. */
+/**
+ * Pays on the spot under PER_TX_CAP (like the contract's auto rule), otherwise leaves it pending.
+ * With `withAuditor`, every proposal waits (status "auditing") until the test calls audit().
+ */
 export class FakeChain implements ChainPort {
+  withAuditor = false;
+  /** On-chain state per payment id, as paymentState() reports it. */
+  states = new Map<string, { status: "pending" | "executed" | "rejected"; audit: "none" | "cleared" | "flagged"; amount: bigint }>();
+  /** Runs inside deps.auditNow in tests that wire it. */
+  async audit(paymentId: bigint, cleared: boolean) {
+    const st = this.states.get(paymentId.toString());
+    if (!st || st.status !== "pending" || st.audit !== "none") return;
+    st.audit = cleared ? "cleared" : "flagged";
+    if (cleared && st.amount <= PER_TX_CAP) st.status = "executed";
+  }
+  async paymentState(paymentId: bigint) {
+    const st = this.states.get(paymentId.toString());
+    return { status: st?.status ?? ("none" as const), audit: st?.audit ?? ("none" as const) };
+  }
   proposals: Array<{ key: string; amount: bigint; invoiceId: Hex; lineId: Hex; vendor: Address }> = [];
   sweeps: Array<{ key: string; ref: Hex; amount: bigint }> = [];
   paidInvoices = new Set<string>();
@@ -104,8 +121,15 @@ export class FakeChain implements ChainPort {
     this.proposals.push({ key: args.key, amount: args.amount, invoiceId, lineId: args.lineId, vendor: args.vendor });
     const paymentId = BigInt(this.nextPaymentId++);
     const txHash = pad(toHex(1000 + Number(paymentId)), { size: 32 });
+    if (this.withAuditor) {
+      this.states.set(paymentId.toString(), { status: "pending", audit: "none", amount: args.amount });
+      const result = { status: "auditing" as const, paymentId, txHash };
+      this.results.set(args.key, result);
+      return result;
+    }
     const executed = args.amount <= PER_TX_CAP;
     if (executed) this.paidInvoices.add(invoiceId);
+    this.states.set(paymentId.toString(), { status: executed ? "executed" : "pending", audit: "none", amount: args.amount });
     const result = { status: executed ? ("executed" as const) : ("pending" as const), paymentId, txHash };
     this.results.set(args.key, result);
     return result;

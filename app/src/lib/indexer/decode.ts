@@ -13,6 +13,7 @@ export const PROPOSAL_KINDS = [
   "SetAgent",
   "SetConfigHash",
   "Unpause",
+  "SetAuditor",
 ] as const;
 export type ProposalKindName = (typeof PROPOSAL_KINDS)[number];
 
@@ -44,6 +45,7 @@ const PROPOSAL_PARAMS: Record<ProposalKindName, readonly { name: string; type: s
   SetAgent: [{ name: "agent", type: "address" }],
   SetConfigHash: [{ name: "configHash", type: "bytes32" }],
   Unpause: [],
+  SetAuditor: [{ name: "auditor", type: "address" }],
 };
 
 export function proposalKindName(kind: number): ProposalKindName | `Unknown(${number})` {

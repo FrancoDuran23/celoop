@@ -112,8 +112,11 @@ export function loadConfig(file: string): { config: InstanceConfig; baseDir: str
 
 const PESO = (n: bigint) => `$ ${(n / BigInt(10) ** BigInt(18)).toLocaleString("es-AR")}`;
 
-/** Checks the config against the agent address and derives everything setup sends and stores. */
-export function buildPlan(config: InstanceConfig, baseDir: string, agent: Address): Plan {
+/**
+ * Checks the config against the agent (and auditor, if any) addresses and derives everything setup
+ * sends and stores. The auditor must be a third party: not the agent, not a signer, not a vendor.
+ */
+export function buildPlan(config: InstanceConfig, baseDir: string, agent: Address, auditor?: Address): Plan {
   const warnings: string[] = [];
   const errors: string[] = [];
 
@@ -144,6 +147,12 @@ export function buildPlan(config: InstanceConfig, baseDir: string, agent: Addres
     errors.push(`el umbral (${config.threshold}) es mayor que la cantidad de firmantes (${signers.length})`);
   }
   if (signers.some((s) => s.toLowerCase() === agent.toLowerCase())) errors.push("el agente no puede ser firmante");
+  if (auditor) {
+    if (auditor.toLowerCase() === agent.toLowerCase()) errors.push("el auditor no puede ser el agente: tiene que tener su propia clave");
+    if (signers.some((s) => s.toLowerCase() === auditor.toLowerCase())) errors.push("el auditor no puede ser firmante");
+  } else {
+    warnings.push("no hay auditor: los pagos chicos salen sin una segunda revisión");
+  }
   if (!config.people.some((p) => p.roles.includes(REVIEWER_ROLE))) warnings.push("no hay ninguna persona con rol revisor");
   if (!config.people.some((p) => p.roles.includes(OPERATOR_ROLE))) {
     warnings.push("no hay ninguna persona con rol operador: nadie recibe las alertas técnicas");
@@ -155,6 +164,7 @@ export function buildPlan(config: InstanceConfig, baseDir: string, agent: Addres
     vendorCuits.add(v.cuit);
     if (v.cuit === config.cooperadora.cuit) errors.push(`el proveedor ${v.legalName} tiene el CUIT de la cooperadora`);
     if (v.address.toLowerCase() === agent.toLowerCase()) errors.push(`el proveedor ${v.legalName} tiene la dirección del agente`);
+    if (auditor && v.address.toLowerCase() === auditor.toLowerCase()) errors.push(`el proveedor ${v.legalName} tiene la dirección del auditor`);
     if (v.phone && !phones.has(v.phone)) errors.push(`el proveedor ${v.legalName} apunta a un teléfono que no está en el padrón`);
   }
 

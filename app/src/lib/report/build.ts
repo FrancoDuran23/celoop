@@ -9,6 +9,8 @@ import {
 } from "./format";
 import type { ExpenseRow, IncomeConcept, IncomeRow, ReportData } from "./types";
 
+const auditOf = (a: string | null): "cleared" | "flagged" | null => (a === "cleared" || a === "flagged" ? a : null);
+
 const CONCEPTS: IncomeConcept[] = ["aportes_socios", "sin_identificar", "especie", "trabajo"];
 
 export const SIGNATURE_SLOTS = [
@@ -91,6 +93,7 @@ export async function buildReport(db: Db, period: string): Promise<ReportData> {
       lineName: line?.name ?? "No budget line",
       amount: p.amount,
       rule: p.rule === "signers" ? "signers" : "auto",
+      audit: auditOf(p.audit),
       overBudget: p.overBudget,
       budgetExpired: p.budgetExpired,
       invoiceUrl: inv?.fileUrl ?? null,

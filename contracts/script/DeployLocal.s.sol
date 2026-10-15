@@ -13,6 +13,7 @@ import {MockWARS} from "../src/test/MockWARS.sol";
 /// Environment:
 ///   SIGNERS             comma-separated signer addresses (required)
 ///   AGENT               agent address (required, must not be a signer)
+///   AUDITOR             auditor address (default 0x0 = no auditor)
 ///   THRESHOLD           approvals needed (default: min(2, signer count))
 ///   PER_TX_CAP          automatic per-payment cap in wARS base units (default 100_000e18)
 ///   VENDOR_MONTHLY_CAP  automatic per-vendor 30-day cap in base units (default 300_000e18)
@@ -31,18 +32,9 @@ contract DeployLocal is Script {
     }
 
     function run() external returns (Deployment memory d) {
-        address[] memory signers = vm.envAddress("SIGNERS", ",");
-        address agent = vm.envAddress("AGENT");
-        uint256 defaultThreshold = signers.length < 2 ? signers.length : 2;
-        uint256 threshold = vm.envOr("THRESHOLD", defaultThreshold);
-        uint256 perTxCap = vm.envOr("PER_TX_CAP", uint256(100_000e18));
-        uint256 vendorMonthlyCap = vm.envOr("VENDOR_MONTHLY_CAP", uint256(300_000e18));
-        bytes32 configHash = vm.envOr("CONFIG_HASH", bytes32(0));
-
         vm.startBroadcast();
         MockWARS token = new MockWARS();
-        TreasuryPolicy treasury =
-            new TreasuryPolicy(address(token), signers, threshold, agent, perTxCap, vendorMonthlyCap, configHash);
+        TreasuryPolicy treasury = _treasury(address(token));
         BoxFactory factory = new BoxFactory(address(treasury), address(token));
         vm.stopBroadcast();
 
@@ -54,5 +46,20 @@ contract DeployLocal is Script {
         vm.serializeAddress(obj, "treasury", d.treasury);
         string memory json = vm.serializeAddress(obj, "boxFactory", d.boxFactory);
         console.log(json);
+    }
+
+    function _treasury(address token) internal returns (TreasuryPolicy) {
+        address[] memory signers = vm.envAddress("SIGNERS", ",");
+        uint256 defaultThreshold = signers.length < 2 ? signers.length : 2;
+        return new TreasuryPolicy(
+            token,
+            signers,
+            vm.envOr("THRESHOLD", defaultThreshold),
+            vm.envAddress("AGENT"),
+            vm.envOr("PER_TX_CAP", uint256(100_000e18)),
+            vm.envOr("VENDOR_MONTHLY_CAP", uint256(300_000e18)),
+            vm.envOr("CONFIG_HASH", bytes32(0)),
+            vm.envOr("AUDITOR", address(0))
+        );
     }
 }

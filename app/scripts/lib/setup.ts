@@ -7,7 +7,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import type { Db } from "@/db";
 import { budgetLines, cooperadora, persons, vendors } from "@/db/schema";
 import { treasuryPolicyAbi } from "@/lib/chain/abi";
-import { ANVIL_KEYS } from "@/lib/chain/anvil";
+import { ANVIL_AUDITOR_KEY, ANVIL_KEYS } from "@/lib/chain/anvil";
 import { attributionSuffix } from "@/lib/chain/attribution";
 import { publicClient } from "@/lib/chain/clients";
 import { resetEnv } from "@/lib/env";
@@ -49,7 +49,7 @@ export type SetupResult =
       env: Record<string, string>;
     };
 
-const PROPOSAL_KIND_NAMES = ["SetBudget", "MoveBudget", "SetVendor", "SetCaps", "SetSigners", "SetAgent", "SetConfigHash", "Unpause"];
+const PROPOSAL_KIND_NAMES = ["SetBudget", "MoveBudget", "SetVendor", "SetCaps", "SetSigners", "SetAgent", "SetConfigHash", "Unpause", "SetAuditor"];
 
 function settings(opts: SetupOptions) {
   const e = { ...process.env, ...(opts.env ?? {}) };
@@ -59,11 +59,17 @@ function settings(opts: SetupOptions) {
   const deployerKey = (get("DEPLOYER_PRIVATE_KEY") ?? (local ? ANVIL_KEYS[0] : undefined)) as Hex | undefined;
   const agentKey = (get("AGENT_PRIVATE_KEY") ?? (local ? ANVIL_KEYS[1] : undefined)) as Hex | undefined;
   const agent = (get("AGENT_ADDRESS") ?? (agentKey ? privateKeyToAccount(agentKey).address : undefined)) as Address | undefined;
+  // The auditor is a second agent with its own key. Optional: without it, small payments go out unreviewed.
+  const auditorKey = (get("AUDITOR_PRIVATE_KEY") ?? (local ? ANVIL_AUDITOR_KEY : undefined)) as Hex | undefined;
+  const auditor = (get("AUDITOR_ADDRESS") ?? (auditorKey ? privateKeyToAccount(auditorKey).address : undefined)) as
+    | Address
+    | undefined;
   return {
     chain,
     rpcUrl: get("RPC_URL") ?? (local ? LOCAL_RPC : undefined),
     deployerKey,
     agent,
+    auditor,
     attributionCode: get("ATTRIBUTION_CODE"),
     databaseUrl: get("DATABASE_URL"),
     /** Only Sepolia may reuse an existing token; local always deploys MockWARS, mainnet uses wARS. */
@@ -80,6 +86,7 @@ function printPlan(log: (s: string) => void, plan: Plan, s: ReturnType<typeof se
   log(`Red: ${s.chain} · RPC ${s.rpcUrl ?? "(falta RPC_URL)"}`);
   log(`Acta: ${plan.actaFile}\n  configHash ${plan.configHash}`);
   log(`Agente: ${s.agent}`);
+  log(`Auditor: ${s.auditor ?? "ninguno (los pagos chicos salen sin una segunda revisión)"}`);
   log(`Firmantes (${plan.threshold} de ${plan.signers.length}): ${plan.signers.join(", ")}`);
   log(`Topes de pago automático: ${fmt(plan.perTxCap)} por pago, ${fmt(plan.vendorMonthlyCap)} por proveedor cada 30 días`);
   log(`Token: ${s.chain === "mainnet" ? "wARS real" : s.warsAddress ? s.warsAddress : "MockWARS (se despliega)"}`);
@@ -180,7 +187,7 @@ export async function runSetup(opts: SetupOptions): Promise<SetupResult> {
   else if (opts.config) [config, baseDir] = [parseConfig(opts.config), opts.baseDir ?? process.cwd()];
   else throw new Error("Falta el archivo de configuración.");
 
-  const plan = buildPlan(config, baseDir, s.agent);
+  const plan = buildPlan(config, baseDir, s.agent, s.auditor);
   printPlan(log, plan, s);
 
   // ── Safety cut: nothing below this line runs off local without --yes. ──
@@ -229,6 +236,7 @@ export async function runSetup(opts: SetupOptions): Promise<SetupResult> {
         CHAIN: s.chain,
         SIGNERS: plan.signers.join(","),
         AGENT: s.agent,
+        AUDITOR: s.auditor,
         THRESHOLD: String(plan.threshold),
         PER_TX_CAP: plan.perTxCap.toString(),
         VENDOR_MONTHLY_CAP: plan.vendorMonthlyCap.toString(),
@@ -268,10 +276,10 @@ export async function runSetup(opts: SetupOptions): Promise<SetupResult> {
   const e = { ...process.env, ...(opts.env ?? {}) };
   for (const k of ["TICK_SECRET", "TELEGRAM_WEBHOOK_SECRET", "SESSION_SECRET"]) out[k] = e[k]?.trim() || secret();
 
-  log(`\nVariables de entorno (pegalas en Vercel; AGENT_PRIVATE_KEY, DATABASE_URL, TELEGRAM_BOT_TOKEN y las claves de API van aparte):`);
+  log(`\nVariables de entorno (pegalas en Vercel; AGENT_PRIVATE_KEY, AUDITOR_PRIVATE_KEY, DATABASE_URL, TELEGRAM_BOT_TOKEN y las claves de API van aparte):`);
   for (const [k, v] of Object.entries(out)) log(`${k}=${v}`);
   if (s.chain !== "local") {
-    log(`\nAGENT_SEND quedó en off: pasalo a on cuando las propuestas estén ejecutadas y el agente tenga saldo para las comisiones.`);
+    log(`\nAGENT_SEND quedó en off: pasalo a on cuando las propuestas estén ejecutadas y el agente y el auditor tengan saldo para las comisiones.`);
   }
   log(`Nota: el primer tick de cada mes cierra el mes anterior. Los meses anteriores al alta de la cooperadora no se cierran.`);
   return { status: "done", plan, chainId, deployment, deployBlock, proposalsExecuted, env: out };

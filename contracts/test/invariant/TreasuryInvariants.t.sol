@@ -10,7 +10,7 @@ import {ITreasuryPolicy} from "../../src/interfaces/ITreasuryPolicy.sol";
 import {TrackedWARS} from "../utils/TrackedWARS.sol";
 import {TreasuryHandler} from "./TreasuryHandler.sol";
 
-/// @notice The nine invariants of docs/specs/01-contratos.md, checked after every random call
+/// @notice The ten invariants of docs/specs/01-contratos.md and 08-auditor.md, checked after every random call
 /// sequence driven by `TreasuryHandler`.
 /// forge-config: default.invariant.depth = 128
 contract TreasuryInvariants is StdInvariant, Test {
@@ -27,12 +27,17 @@ contract TreasuryInvariants is StdInvariant, Test {
         address[] memory agentPool = new address[](2);
         agentPool[0] = makeAddr("agent0");
         agentPool[1] = makeAddr("agent1");
-        address[] memory vendorPool = new address[](6);
+        address[] memory auditorPool = new address[](2);
+        auditorPool[0] = makeAddr("auditor0");
+        auditorPool[1] = makeAddr("auditor1");
+        address[] memory vendorPool = new address[](8);
         for (uint256 i = 0; i < 4; i++) {
             vendorPool[i] = makeAddr(string.concat("vendor", vm.toString(i)));
         }
         vendorPool[4] = agentPool[0];
         vendorPool[5] = agentPool[1];
+        vendorPool[6] = auditorPool[0];
+        vendorPool[7] = auditorPool[1];
         address[] memory strangers = new address[](2);
         strangers[0] = makeAddr("stranger0");
         strangers[1] = makeAddr("stranger1");
@@ -50,16 +55,18 @@ contract TreasuryInvariants is StdInvariant, Test {
         initialSigners[0] = signerPool[0];
         initialSigners[1] = signerPool[1];
         initialSigners[2] = signerPool[2];
-        treasury =
-            new TreasuryPolicy(address(token), initialSigners, 2, agentPool[0], 100e18, 250e18, keccak256("acta"));
+        treasury = new TreasuryPolicy(
+            address(token), initialSigners, 2, agentPool[0], 100e18, 250e18, keccak256("acta"), auditorPool[0]
+        );
         factory = new BoxFactory(address(treasury), address(token));
         token.setTreasury(address(treasury));
         for (uint256 i = 0; i < refs.length; i++) {
             token.registerBox(factory.boxAddress(refs[i]));
         }
 
-        handler =
-            new TreasuryHandler(treasury, token, factory, signerPool, agentPool, vendorPool, strangers, lines, refs);
+        handler = new TreasuryHandler(
+            treasury, token, factory, signerPool, agentPool, auditorPool, vendorPool, strangers, lines, refs
+        );
 
         // Initial configuration (no funds move here).
         _pass(
@@ -77,9 +84,10 @@ contract TreasuryInvariants is StdInvariant, Test {
             ITreasuryPolicy.ProposalKind.SetBudget,
             abi.encode(lines[2], 60e18, uint64(block.timestamp + 10 days))
         );
-        // vendor0..2 are regular vendors; agent0 is a vendor too (fee reimbursements), vendor3 starts unknown.
-        for (uint256 i = 0; i < 5; i++) {
-            if (i == 3) continue;
+        // vendor0..2 are regular vendors; agent0 and auditor0 are vendors too (fee reimbursements),
+        // vendor3 starts unknown.
+        for (uint256 i = 0; i < 7; i++) {
+            if (i == 3 || i == 5) continue;
             _pass(
                 signerPool,
                 ITreasuryPolicy.ProposalKind.SetVendor,
@@ -90,7 +98,7 @@ contract TreasuryInvariants is StdInvariant, Test {
         handler.contribute(0, 500e18, 0);
 
         // Weighted so that payments and votes, the core of the system, dominate the sequences.
-        bytes4[] memory selectors = new bytes4[](20);
+        bytes4[] memory selectors = new bytes4[](22);
         selectors[0] = TreasuryHandler.contribute.selector;
         selectors[1] = TreasuryHandler.directTransfer.selector;
         selectors[2] = TreasuryHandler.depositToBox.selector;
@@ -111,6 +119,8 @@ contract TreasuryInvariants is StdInvariant, Test {
         selectors[17] = TreasuryHandler.approveProposal.selector;
         selectors[18] = TreasuryHandler.pause.selector;
         selectors[19] = TreasuryHandler.warp.selector;
+        selectors[20] = TreasuryHandler.auditPayment.selector;
+        selectors[21] = TreasuryHandler.auditPayment.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
         targetContract(address(handler));
     }
@@ -168,6 +178,17 @@ contract TreasuryInvariants is StdInvariant, Test {
     function invariant_09_BoxOnlyPaysTreasury() public view {
         assertEq(token.boxLeaks(), 0);
         assertFalse(handler.boxViolation());
+    }
+
+    /// 10. With an auditor, no payment goes out automatically without its clearance; the auditor
+    /// never signs, never receives an automatic payment and is never the agent.
+    function invariant_10_AuditorHoldsAutomaticPayments() public view {
+        assertFalse(handler.auditorViolation());
+        address current = treasury.auditor();
+        if (current != address(0)) {
+            assertFalse(treasury.isSigner(current));
+            assertTrue(current != treasury.agent());
+        }
     }
 
     function _pass(address[] memory signerPool, ITreasuryPolicy.ProposalKind kind, bytes memory data) internal {

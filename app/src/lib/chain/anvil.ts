@@ -15,6 +15,9 @@ export const ANVIL_KEYS = [
   "0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a",
 ] as const;
 
+/** anvil's dev account #6, the local auditor (0x976EA74026E726554dB657fA54763abd0C3a0aa9). Local use only. */
+export const ANVIL_AUDITOR_KEY = "0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e" as const;
+
 export type Anvil = { url: string; port: number; stop: () => Promise<void> };
 
 export function anvilAvailable(): boolean {

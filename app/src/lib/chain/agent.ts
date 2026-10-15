@@ -1,5 +1,6 @@
 // Agent transactions. Every send is idempotent by key (table agent_txs), carries the ERC-8021
 // tag and, when FEE_CURRENCY is set, pays fees in that token as a CIP-64 transaction.
+// The auditor sends through the same path with its own account (opts.account).
 //
 // State machine of an agent_txs row:
 //   (none) ──insert──▶ sending ──receipt──▶ mined | reverted
@@ -14,8 +15,10 @@ import {
   encodeFunctionData,
   isAddressEqual,
   keccak256,
+  zeroAddress,
   type Address,
   type Hex,
+  type LocalAccount,
   type TransactionReceipt,
 } from "viem";
 import { getDb, type Db } from "@/db";
@@ -31,6 +34,8 @@ export type AgentTxOptions = {
   db?: Db;
   /** How long to wait for a receipt before giving up with AgentTxPendingError. Default 60 s. */
   receiptTimeoutMs?: number;
+  /** Who signs. Defaults to the agent (AGENT_PRIVATE_KEY); the auditor passes auditorAccount(). */
+  account?: LocalAccount;
 };
 
 export type AgentTxResult = { txHash: Hex; receipt: TransactionReceipt } | { dryRun: true };
@@ -135,12 +140,12 @@ export function asCip64<T extends object>(request: T): Omit<T, "gasPrice" | "typ
  * Prepares and signs (does not send) an agent transaction with `data` as given (already tagged).
  * Uses the pending nonce unless one is passed. With FEE_CURRENCY set it is a CIP-64 transaction.
  */
-export async function signAgentTx(args: { to: Address; data: Hex; nonce?: number }): Promise<{
+export async function signAgentTx(args: { to: Address; data: Hex; nonce?: number; account?: LocalAccount }): Promise<{
   serialized: Hex;
   nonce: number;
 }> {
-  const account = agentAccount();
-  const wallet = await agentWalletClient();
+  const account = args.account ?? agentAccount();
+  const wallet = await agentWalletClient(account);
   const feeCurrency = env().FEE_CURRENCY as Address | undefined;
   const nonce =
     args.nonce ?? (await publicClient().getTransactionCount({ address: account.address, blockTag: "pending" }));
@@ -160,8 +165,12 @@ export async function signAgentTx(args: { to: Address; data: Hex; nonce?: number
 }
 
 /** Simulates, signs, stores hash and nonce, broadcasts and waits. The row must be `sending` with no hash. */
-async function sendFresh(db: Db, args: { key: string; to: Address; data: Hex }, timeoutMs: number) {
-  const account = agentAccount();
+async function sendFresh(
+  db: Db,
+  args: { key: string; to: Address; data: Hex },
+  timeoutMs: number,
+  account: LocalAccount,
+) {
   const client = publicClient();
   const data = withAttribution(args.data);
 
@@ -175,7 +184,7 @@ async function sendFresh(db: Db, args: { key: string; to: Address; data: Hex }, 
   let serialized: Hex;
   let nonce: number;
   try {
-    ({ serialized, nonce } = await signAgentTx({ to: args.to, data }));
+    ({ serialized, nonce } = await signAgentTx({ to: args.to, data, account }));
   } catch (e) {
     await updateRow(db, args.key, { status: "failed", error: `prepare: ${errorText(e)}` });
     throw e;
@@ -210,6 +219,7 @@ export async function sendAgentTx(
 ): Promise<AgentTxResult> {
   const db = opts.db ?? getDb();
   const timeoutMs = opts.receiptTimeoutMs ?? DEFAULT_RECEIPT_TIMEOUT_MS;
+  const account = opts.account ?? agentAccount();
 
   let row = await findRow(db, args.key);
 
@@ -222,7 +232,7 @@ export async function sendAgentTx(
   }
 
   if (!sendEnabled()) {
-    await publicClient().call({ account: agentAccount().address, to: args.to, data: withAttribution(args.data) });
+    await publicClient().call({ account: account.address, to: args.to, data: withAttribution(args.data) });
     return { dryRun: true };
   }
 
@@ -232,7 +242,7 @@ export async function sendAgentTx(
       .values({ key: args.key, kind: args.kind, status: "sending", updatedAt: new Date() })
       .onConflictDoNothing({ target: agentTxs.key })
       .returning();
-    if (inserted.length > 0) return sendFresh(db, args, timeoutMs);
+    if (inserted.length > 0) return sendFresh(db, args, timeoutMs, account);
     // Someone else inserted it between our read and our insert: treat it as theirs.
     row = await findRow(db, args.key);
     if (row?.status === "sending" && row.txHash) return settle(db, args.key, row.txHash as Hex, timeoutMs);
@@ -245,7 +255,7 @@ export async function sendAgentTx(
     if (Date.now() - row.updatedAt.getTime() < STALE_SENDING_MS) {
       throw new AgentTxPendingError(args.key, null, "another process is sending this key");
     }
-    if (await agentHasPendingTxs(agentAccount().address)) {
+    if (await agentHasPendingTxs(account.address)) {
       throw new AgentTxPendingError(args.key, null, "the agent has transactions pending in the mempool");
     }
   }
@@ -263,14 +273,15 @@ export async function sendAgentTx(
     )
     .returning({ id: agentTxs.id });
   if (claimed.length === 0) throw new AgentTxPendingError(args.key, null, "another process is retrying this key");
-  return sendFresh(db, args, timeoutMs);
+  return sendFresh(db, args, timeoutMs, account);
 }
 
 /** Fiscal identity of an invoice, as the contract takes it. */
 export type InvoiceKey = { cuit: bigint; tipo: number; ptoVta: number; nro: bigint };
 
 export type ProposePaymentResult = {
-  status: "executed" | "pending" | "dry-run";
+  /** auditing = pending until the auditor clears or flags it (the treasury has an auditor). */
+  status: "executed" | "pending" | "auditing" | "dry-run";
   paymentId?: bigint;
   txHash?: Hex;
 };
@@ -304,7 +315,15 @@ export async function proposePayment(
       // not one of ours
     }
   }
-  return { status: executed ? "executed" : "pending", paymentId, txHash: result.txHash };
+  if (executed) return { status: "executed", paymentId, txHash: result.txHash };
+  const auditor = await publicClient().readContract({
+    address: treasury,
+    abi: treasuryPolicyAbi,
+    functionName: "auditor",
+    blockNumber: result.receipt.blockNumber,
+  });
+  const status = isAddressEqual(auditor, zeroAddress) ? "pending" : "auditing";
+  return { status, paymentId, txHash: result.txHash };
 }
 
 export type SweepBoxResult = { status: "swept" | "empty" | "dry-run"; amount?: bigint; txHash?: Hex };

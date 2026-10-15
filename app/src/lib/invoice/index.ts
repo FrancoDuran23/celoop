@@ -7,7 +7,7 @@ export type {
   Validation,
   ValidationCode,
 } from "./types";
-export { readInvoice } from "./read";
+export { readInvoice, readArcaQr } from "./read";
 export { validateInvoice, type ValidationContext } from "./validate";
 export { invoiceIdOf, fileHashOf, toWarsUnits } from "./ids";
 export { looksLikeInjection } from "./injection";

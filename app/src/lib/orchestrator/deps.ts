@@ -7,6 +7,7 @@ import type { Address, Hex } from "viem";
 import type { Db } from "@/db";
 import type { Buttons, Notifier } from "@/lib/bot/notify";
 import type { InvoiceKey, ProposePaymentResult, SweepBoxResult } from "@/lib/chain/agent";
+import type { AuditStatus, PaymentStatus } from "@/lib/chain/treasury";
 import { env } from "@/lib/env";
 import type { InvoiceFile, ReadResult } from "@/lib/invoice";
 import { chatIdOf, claimNotice, releaseNotice } from "./chat-state";
@@ -24,6 +25,8 @@ export interface ChainPort {
   balanceOf(address: Address): Promise<bigint>;
   /** Treasury balance, or null when the chain can't be read (callers fall back to the database). */
   treasuryBalance(): Promise<bigint | null>;
+  /** A payment's status and the auditor's verdict, straight from the contract. */
+  paymentState(paymentId: bigint): Promise<{ status: PaymentStatus; audit: AuditStatus }>;
 }
 
 export type CloseResult = { status: string; created: boolean };
@@ -47,6 +50,11 @@ export interface AgentDeps {
   reports: ReportsPort;
   /** Copies new chain events into Postgres (runIndexer). */
   indexer: () => Promise<unknown>;
+  /**
+   * Asks the auditor to review pending payments now, so a small one doesn't wait for the next cron
+   * round. The auditor runs with its own deps and key; without this the cron still gets to it.
+   */
+  auditNow?: () => Promise<unknown>;
   now: () => Date;
   appUrl: string;
 }
@@ -81,6 +89,11 @@ export function chainPort(): ChainPort {
       } catch {
         return null;
       }
+    },
+    async paymentState(paymentId) {
+      const { getPayment, getPaymentAudit } = await import("@/lib/chain/treasury");
+      const [p, a] = await Promise.all([getPayment(paymentId), getPaymentAudit(paymentId)]);
+      return { status: p.status, audit: a.status };
     },
   };
 }

@@ -17,10 +17,13 @@ export interface PanelExpense {
   paymentId: string; date: string; vendor: string; cuit: string | null; lineName: string;
   amount: string; rule: "auto" | "signers"; approvals: number; signerCount: number;
   overBudget: boolean; budgetExpired: boolean; invoiceUrl: string | null; txHash: string | null;
+  /** The auditor's verdict on chain; null = not audited (no auditor, or paid by signers first). */
+  audit: "cleared" | "flagged" | null;
 }
 export interface PanelPending {
   paymentId: string; vendor: string; lineName: string; amount: string;
   approvals: number; missing: number; threshold: number;
+  audit: "cleared" | "flagged" | null;
 }
 export interface PanelData {
   header: { cooperadora: string; school: string; cuit: string; ruce: string | null; chainId: number };
@@ -34,6 +37,8 @@ export interface PanelData {
   changes: BudgetChangeRow[];
   publishedReports: Array<{ period: string; publishedAt: string | null }>;
 }
+
+const auditOf = (a: string | null): "cleared" | "flagged" | null => (a === "cleared" || a === "flagged" ? a : null);
 
 export interface PanelOptions {
   now?: Date;
@@ -122,6 +127,7 @@ export async function getPanelData(db: Db, opts: PanelOptions = {}): Promise<Pan
         approvals: p.approvals, signerCount: l.signerCount,
         overBudget: p.overBudget, budgetExpired: p.budgetExpired,
         invoiceUrl: invFor(p)?.fileUrl ?? null, txHash: p.executedTxHash,
+        audit: auditOf(p.audit),
       };
     });
 
@@ -132,6 +138,7 @@ export async function getPanelData(db: Db, opts: PanelOptions = {}): Promise<Pan
     pending.push({
       paymentId: p.paymentId.toString(), vendor: vendorOf(p), lineName: lineName(p.lineId),
       amount: p.amount, approvals: count, missing: Math.max(l.threshold - count, 0), threshold: l.threshold,
+      audit: auditOf(p.audit),
     });
   }
 

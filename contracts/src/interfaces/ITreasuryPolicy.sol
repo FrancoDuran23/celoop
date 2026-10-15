@@ -17,6 +17,14 @@ interface ITreasuryPolicy {
         Signers
     }
 
+    /// The auditor's verdict on a payment. Cleared lets it go out automatically when it fits the
+    /// automatic limits; Flagged leaves it to the signers.
+    enum AuditStatus {
+        None,
+        Cleared,
+        Flagged
+    }
+
     /// Proposal kinds and the abi-encoded `data` each one takes.
     enum ProposalKind {
         SetBudget, // (bytes32 lineId, uint256 allocated, uint64 periodEnd)
@@ -26,7 +34,8 @@ interface ITreasuryPolicy {
         SetSigners, // (address[] signers, uint256 threshold)
         SetAgent, // (address agent)
         SetConfigHash, // (bytes32 configHash)
-        Unpause // ()
+        Unpause, // ()
+        SetAuditor // (address auditor), address(0) turns the auditor off
     }
 
     /// Fiscal identity of an Argentine invoice (ARCA). invoiceId = keccak256(abi.encode(cuit, tipo, ptoVta, nro)).
@@ -78,6 +87,7 @@ interface ITreasuryPolicy {
     );
     event PaymentApproved(uint256 indexed paymentId, address indexed signer, uint256 approvals);
     event PaymentRejected(uint256 indexed paymentId, address indexed signer);
+    event PaymentAudited(uint256 indexed paymentId, address indexed auditor, bool cleared, bytes32 reportHash);
 
     event ProposalCreated(uint256 indexed proposalId, address indexed proposer, ProposalKind kind, bytes data);
     event ProposalApproved(uint256 indexed proposalId, address indexed signer, uint256 approvals);
@@ -89,6 +99,7 @@ interface ITreasuryPolicy {
     event CapsSet(uint256 perTxCap, uint256 vendorMonthlyCap);
     event SignersSet(address[] signers, uint256 threshold);
     event AgentSet(address agent);
+    event AuditorSet(address auditor);
     event ConfigHashSet(bytes32 configHash);
     event Paused(address indexed by);
     event Unpaused();
@@ -99,8 +110,8 @@ interface ITreasuryPolicy {
 
     // ---- payments ----
     /// Agent only. Reverts if paused, vendor not enabled, CUIT mismatch, invoice already paid
-    /// or already pending. Executes immediately when every automatic limit holds; otherwise
-    /// stores it as Pending.
+    /// or already pending. Without an auditor it executes immediately when every automatic limit
+    /// holds; with an auditor it always stores it as Pending, to wait for auditPayment.
     function proposePayment(
         address vendor,
         Invoice calldata invoice,
@@ -118,6 +129,12 @@ interface ITreasuryPolicy {
     /// Signer only. Cancels a Pending payment.
     function reject(uint256 paymentId) external;
 
+    /// Auditor only, once per Pending payment, never while paused. `reportHash` is the keccak256 of
+    /// the published audit report and cannot be zero. Cleared executes the payment when every
+    /// automatic limit holds; otherwise (or Flagged) it stays Pending for the signers. The auditor
+    /// can hold a payment back but never send one past the limits or the signers.
+    function auditPayment(uint256 paymentId, bool cleared, bytes32 reportHash) external returns (bool executed);
+
     // ---- configuration ----
     /// Signer only. Creates a proposal; the proposer's approval counts. Executes at threshold.
     function propose(ProposalKind kind, bytes calldata data) external returns (uint256 proposalId);
@@ -132,6 +149,8 @@ interface ITreasuryPolicy {
     function invoiceIdOf(Invoice calldata invoice) external pure returns (bytes32);
     function token() external view returns (address);
     function agent() external view returns (address);
+    /// address(0) when the cooperadora has no auditor.
+    function auditor() external view returns (address);
     function signers() external view returns (address[] memory);
     function threshold() external view returns (uint256);
     function isSigner(address account) external view returns (bool);
@@ -148,6 +167,7 @@ interface ITreasuryPolicy {
     function payment(uint256 paymentId) external view returns (Payment memory);
     function paymentCount() external view returns (uint256);
     function hasApproved(uint256 paymentId, address signer) external view returns (bool);
+    function paymentAudit(uint256 paymentId) external view returns (AuditStatus status, bytes32 reportHash);
     /// Incremented by SetSigners; votes are counted per epoch.
     function signerEpoch() external view returns (uint256);
     function proposalCount() external view returns (uint256);

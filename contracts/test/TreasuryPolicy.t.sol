@@ -37,26 +37,26 @@ contract TreasuryPolicyTest is Fixture {
     function test_Constructor_RejectsBadThreshold() public {
         address[] memory s = _addrs(s1, s2);
         vm.expectRevert(abi.encodeWithSelector(TreasuryPolicy.InvalidThreshold.selector, 0, 2));
-        new TreasuryPolicy(address(wars), s, 0, agent, 1, 1, 0);
+        new TreasuryPolicy(address(wars), s, 0, agent, 1, 1, 0, address(0));
         vm.expectRevert(abi.encodeWithSelector(TreasuryPolicy.InvalidThreshold.selector, 3, 2));
-        new TreasuryPolicy(address(wars), s, 3, agent, 1, 1, 0);
+        new TreasuryPolicy(address(wars), s, 3, agent, 1, 1, 0, address(0));
     }
 
     function test_Constructor_RejectsDuplicateZeroAndAgentSigners() public {
         vm.expectRevert(abi.encodeWithSelector(TreasuryPolicy.DuplicateSigner.selector, s1));
-        new TreasuryPolicy(address(wars), _addrs(s1, s1), 1, agent, 1, 1, 0);
+        new TreasuryPolicy(address(wars), _addrs(s1, s1), 1, agent, 1, 1, 0, address(0));
 
         vm.expectRevert(abi.encodeWithSelector(TreasuryPolicy.InvalidSigner.selector, address(0)));
-        new TreasuryPolicy(address(wars), _addrs(s1, address(0)), 1, agent, 1, 1, 0);
+        new TreasuryPolicy(address(wars), _addrs(s1, address(0)), 1, agent, 1, 1, 0, address(0));
 
         vm.expectRevert(abi.encodeWithSelector(TreasuryPolicy.AgentIsSigner.selector, agent));
-        new TreasuryPolicy(address(wars), _addrs(s1, agent), 1, agent, 1, 1, 0);
+        new TreasuryPolicy(address(wars), _addrs(s1, agent), 1, agent, 1, 1, 0, address(0));
 
         vm.expectRevert(abi.encodeWithSelector(TreasuryPolicy.InvalidAgent.selector, address(0)));
-        new TreasuryPolicy(address(wars), _addrs(s1, s2), 1, address(0), 1, 1, 0);
+        new TreasuryPolicy(address(wars), _addrs(s1, s2), 1, address(0), 1, 1, 0, address(0));
 
         vm.expectRevert(TreasuryPolicy.InvalidToken.selector);
-        new TreasuryPolicy(address(0), _addrs(s1, s2), 1, agent, 1, 1, 0);
+        new TreasuryPolicy(address(0), _addrs(s1, s2), 1, agent, 1, 1, 0, address(0));
     }
 
     // =====================================================================

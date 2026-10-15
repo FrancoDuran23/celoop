@@ -1,14 +1,18 @@
 // Invoice orchestration. The money path is deterministic: code reads, validates and proposes;
 // the person who uploads picks the budget line; the contract decides auto-pay vs. signatures.
+// With an auditor on the contract, a proposed payment waits for its verdict first (auditando):
+// cleared and within the limits → paid; cleared but over them, or flagged → signatures.
 //
 //   recibida → leida → validada | rechazada(motivo) | revision(motivo)
 //   validada → (partida) → propuesta → pagada | pendiente → aprobada → pagada | cancelada
+//   propuesta → auditando → pagada | pendiente (as above) | cancelada
 //
 // invoices.invoiceId is set only once an invoice validates, so the unique index on it doubles as
 // the duplicate guard: rejected uploads never block a corrected re-upload.
 import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import type { Address, Hex } from "viem";
-import { budgetIndex, budgetLines, chainEvents, cooperadora, invoices, payments, vendors } from "@/db/schema";
+import { agentTxs, audits, budgetIndex, budgetLines, chainEvents, cooperadora, invoices, payments, vendors } from "@/db/schema";
+import type { AuditStatus, PaymentStatus } from "@/lib/chain/treasury";
 import type { InlineButton } from "@/lib/bot/notify";
 import {
   fileHashOf,
@@ -27,18 +31,22 @@ import { enrollUrl, paymentSignUrl, urls } from "./links";
 import { sendReviewCards } from "./review-card";
 import {
   canManageInvoices,
+  OPERATOR_ROLE,
   personById,
   personsWithRoles,
   REVIEWER_ROLE,
   SIGNER_ROLES,
   type Person,
 } from "./people";
+import { notifyOnce } from "./deps";
 
 export type InvoiceRow = typeof invoices.$inferSelect;
 
 /** Every agent send is serialized under this lock so two sends never race for a nonce. */
 export const AGENT_TX_LOCK = "agent-tx";
 export const AGENT_TX_LOCK_MS = 120_000;
+/** A payment the auditor hasn't reviewed after this long goes to the signers anyway. */
+export const AUDIT_TIMEOUT_MS = 15 * 60 * 1000;
 
 export const INJECTION_REASON = "La factura tiene instrucciones de pago en el texto; la reviso con una persona";
 const TECH_REASON = "Tuve un problema técnico al procesar la factura. Probá mandarla de nuevo en unos minutos";
@@ -48,6 +56,7 @@ const CONTRACT_REASON =
 const STATUS_TEXT: Record<string, string> = {
   validada: "esperando que elijan la partida",
   propuesta: "con el pago en curso",
+  auditando: "esperando la revisión del auditor",
   pendiente: "esperando firmas",
   aprobada: "con las firmas, por pagarse",
   pagada: "pagada",
@@ -260,7 +269,7 @@ export async function suggestLine(deps: AgentDeps, inv: InvoiceRow): Promise<str
         and(
           eq(invoices.vendorId, inv.vendorId),
           isNotNull(invoices.lineId),
-          inArray(invoices.status, ["pagada", "pendiente", "aprobada"]),
+          inArray(invoices.status, ["pagada", "pendiente", "aprobada", "auditando"]),
         ),
       )
       .orderBy(desc(invoices.updatedAt))
@@ -388,35 +397,141 @@ export async function proposeInvoice(
   if (result.status === "executed") {
     const row = await transition(deps, inv.id, ["propuesta"], { status: "pagada", paymentId });
     if (!row) return { invoiceId: inv.id, status: "pagada" };
-    const link = await txLink(deps, result.txHash);
+    await announceAutoPaid(deps, row, result.txHash ?? null, false);
+    return { invoiceId: inv.id, status: "pagada" };
+  }
+
+  if (result.status === "auditing") {
+    const row = await transition(deps, inv.id, ["propuesta"], { status: "auditando", paymentId });
+    if (!row || paymentId === null) return { invoiceId: inv.id, status: "auditando" };
     await deps.notify(
       inv.uploaderPersonId,
-      `Listo, pagué la ${what}, de la partida ${line?.name ?? "elegida"}. Entró en las reglas de pago automático.\nVer movimiento: ${link}`,
+      `Propuse el pago de la ${what}, de la partida ${line?.name ?? "elegida"}. Antes de que salga lo revisa el auditor, ` +
+        `que es otro agente con su propia llave. Te aviso apenas termine.`,
     );
-    const uploader = await personById(deps.db, inv.uploaderPersonId);
-    await notifyReviewers(
-      deps,
-      `Pago automático: ${what}, partida ${line?.name ?? "-"}. La cargó ${uploader?.name ?? "la comisión"}.\nVer movimiento: ${link}`,
-      [[{ text: "Ver la factura", url: inv.fileUrl.startsWith("http") ? inv.fileUrl : urls.panel(deps.appUrl) }]],
-    );
-    return { invoiceId: inv.id, status: "pagada" };
+    if (!deps.auditNow) return { invoiceId: inv.id, status: "auditando" };
+    try {
+      await deps.auditNow();
+    } catch (e) {
+      console.error(`invoice ${inv.id}: auditor: ${errorText(e)}`);
+    }
+    // Only what the contract says counts, not what the auditor's run reported.
+    let state;
+    try {
+      state = await deps.chain.paymentState(paymentId);
+    } catch (e) {
+      console.error(`invoice ${inv.id}: paymentState: ${errorText(e)}`);
+      return { invoiceId: inv.id, status: "auditando" };
+    }
+    return advanceAudited(deps, row, { ...state, txHash: await auditTxHash(deps, paymentId) });
   }
 
   // Pending: it needs signatures.
   const row = await transition(deps, inv.id, ["propuesta"], { status: "pendiente", paymentId });
   if (!row) return { invoiceId: inv.id, status: "pendiente" };
-  await requestSignatures(deps, row, what, line?.name ?? "-");
-  await deps.notify(
-    inv.uploaderPersonId,
-    `La ${what} no entra en las reglas de pago automático (tope por pago, saldo de la partida o tope mensual del proveedor), así que necesita firmas. Ya les mandé el pedido a los firmantes y te aviso cuando se pague.`,
-  );
+  await toSignatures(deps, row);
   return { invoiceId: inv.id, status: "pendiente" };
 }
 
-async function requestSignatures(deps: AgentDeps, inv: InvoiceRow, what: string, lineName: string) {
+/** "Listo, pagué…" to the uploader and the heads-up to the revisor, for an automatic payment. */
+async function announceAutoPaid(deps: AgentDeps, inv: InvoiceRow, txHash: string | null, audited: boolean) {
+  const line = await lineOf(deps, inv.lineId);
+  const what = await describe(deps, inv);
+  const link = await txLink(deps, txHash);
+  const rule = audited
+    ? "El auditor la revisó y entró en las reglas de pago automático."
+    : "Entró en las reglas de pago automático.";
+  await deps.notify(
+    inv.uploaderPersonId,
+    `Listo, pagué la ${what}, de la partida ${line?.name ?? "elegida"}. ${rule}\nVer movimiento: ${link}`,
+  );
+  const uploader = await personById(deps.db, inv.uploaderPersonId);
+  const extra = audited && inv.paymentId !== null ? `\nInforme del auditor: ${urls.audit(deps.appUrl, inv.paymentId)}` : "";
+  await notifyReviewers(
+    deps,
+    `Pago automático${audited ? " (revisado por el auditor)" : ""}: ${what}, partida ${line?.name ?? "-"}. La cargó ${uploader?.name ?? "la comisión"}.\nVer movimiento: ${link}${extra}`,
+    [[{ text: "Ver la factura", url: inv.fileUrl.startsWith("http") ? inv.fileUrl : urls.panel(deps.appUrl) }]],
+  );
+}
+
+/** Sends a pending invoice to the signers and tells the uploader why. `note` is the auditor's part. */
+async function toSignatures(deps: AgentDeps, inv: InvoiceRow, audit?: { note: string; uploaderText?: string }) {
+  const line = await lineOf(deps, inv.lineId);
+  const what = await describe(deps, inv);
+  await requestSignatures(deps, inv, what, line?.name ?? "-", audit?.note);
+  await deps.notify(
+    inv.uploaderPersonId,
+    audit?.uploaderText ??
+      `La ${what} no entra en las reglas de pago automático (tope por pago, saldo de la partida o tope mensual del proveedor), así que necesita firmas. Ya les mandé el pedido a los firmantes y te aviso cuando se pague.`,
+  );
+}
+
+/** Hash of the auditor's transaction for a payment, if this database saw it go out. */
+async function auditTxHash(deps: AgentDeps, paymentId: bigint): Promise<string | null> {
+  const [row] = await deps.db.select({ txHash: agentTxs.txHash }).from(agentTxs).where(eq(agentTxs.key, `audit:payment:${paymentId}`));
+  return row?.txHash ?? null;
+}
+
+/** The auditor's observaciones on a payment, as bullet lines, from its own report. */
+async function auditObservations(deps: AgentDeps, paymentId: bigint): Promise<string> {
+  const [row] = await deps.db.select({ findings: audits.findings }).from(audits).where(eq(audits.paymentId, paymentId));
+  const findings = ((row?.findings as { level: string; text: string }[] | undefined) ?? []).filter((f) => f.level === "observacion");
+  return findings.length > 0 ? findings.map((f) => `• ${f.text}`).join("\n") : "• Ver el informe del auditor.";
+}
+
+type AuditedState = { status: PaymentStatus; audit: AuditStatus; txHash: string | null };
+
+/**
+ * Moves an `auditando` invoice along with what the contract says: paid by the clearance, sent to
+ * the signers (cleared but over the limits, or flagged), cancelled, or still waiting.
+ */
+export async function advanceAudited(deps: AgentDeps, inv: InvoiceRow, state: AuditedState): Promise<InvoiceOutcome> {
+  if (state.status === "executed") {
+    const row = await transition(deps, inv.id, ["auditando"], { status: "pagada" });
+    if (row) await announceAutoPaid(deps, row, state.txHash, true);
+    return { invoiceId: inv.id, status: "pagada" };
+  }
+  if (state.status === "rejected") {
+    const row = await transition(deps, inv.id, ["auditando"], { status: "cancelada", statusReason: "rechazada por los firmantes" });
+    if (row) await deps.notify(inv.uploaderPersonId, `Los firmantes rechazaron el pago de la ${await describe(deps, inv)}. No se pagó.`);
+    return { invoiceId: inv.id, status: "cancelada" };
+  }
+  if (state.audit === "cleared") {
+    const row = await transition(deps, inv.id, ["auditando"], { status: "pendiente" });
+    if (row) await toSignatures(deps, row, { note: "El auditor la revisó y no encontró problemas." });
+    return { invoiceId: inv.id, status: "pendiente" };
+  }
+  if (state.audit === "flagged") {
+    const row = await transition(deps, inv.id, ["auditando"], { status: "pendiente", statusReason: "observada por el auditor" });
+    if (row && inv.paymentId !== null) {
+      const observations = await auditObservations(deps, inv.paymentId);
+      const report = urls.audit(deps.appUrl, inv.paymentId);
+      await toSignatures(deps, row, {
+        note: `El auditor la observó y no la dejó salir automática:\n${observations}\nInforme: ${report}`,
+        uploaderText:
+          `El auditor observó la ${await describe(deps, inv)}:\n${observations}\n` +
+          `No la pago sola: se la mandé a los firmantes para que decidan. Te aviso cuando la firmen o la rechacen.`,
+      });
+    }
+    return { invoiceId: inv.id, status: "pendiente" };
+  }
+  // Not reviewed yet. After a while it goes to the signers anyway, and the operator hears about it.
+  if (deps.now().getTime() - inv.updatedAt.getTime() < AUDIT_TIMEOUT_MS) return { invoiceId: inv.id, status: "auditando" };
+  const row = await transition(deps, inv.id, ["auditando"], { status: "pendiente", statusReason: "el auditor no respondió" });
+  if (row) {
+    await toSignatures(deps, row, { note: "El auditor todavía no la revisó, así que no puede salir automática." });
+    const text = `Atención operador: el auditor no revisó el pago #${inv.paymentId} en ${AUDIT_TIMEOUT_MS / 60_000} minutos. Lo mandé a firmas. Revisá que /api/auditor esté corriendo.`;
+    console.error(text);
+    for (const op of await personsWithRoles(deps.db, [OPERATOR_ROLE])) await notifyOnce(deps, op.id, `audit-timeout:${inv.paymentId}`, text);
+  }
+  return { invoiceId: inv.id, status: "pendiente" };
+}
+
+async function requestSignatures(deps: AgentDeps, inv: InvoiceRow, what: string, lineName: string, note?: string) {
   const uploader = await personById(deps.db, inv.uploaderPersonId);
   const summary =
-    `Hay un pago que necesita tu firma:\n${what}\nPartida: ${lineName}\nLa cargó: ${uploader?.name ?? "la comisión"}`;
+    `Hay un pago que necesita tu firma:\n${what}\nPartida: ${lineName}\nLa cargó: ${uploader?.name ?? "la comisión"}` +
+    (note ? `\n\n${note}` : "");
   for (const signer of await personsWithRoles(deps.db, SIGNER_ROLES)) {
     if (signer.safeAddress && inv.paymentId !== null) {
       const url = await paymentSignUrl(deps.db, deps.appUrl, signer.id, inv.paymentId, deps.now());
@@ -463,6 +578,23 @@ export async function syncInvoices(deps: AgentDeps): Promise<{ retried: number; 
     await proposeInvoice(deps, inv);
   }
 
+  // Waiting for the auditor: the index has its verdict as soon as it has the event.
+  const auditing = await deps.db
+    .select({ inv: invoices, pay: payments })
+    .from(invoices)
+    .leftJoin(payments, eq(payments.paymentId, invoices.paymentId))
+    .where(eq(invoices.status, "auditando"))
+    .orderBy(invoices.id);
+  for (const { inv, pay } of auditing) {
+    const r = await advanceAudited(deps, inv, {
+      status: (pay?.status as PaymentStatus | undefined) ?? "pending",
+      audit: (pay?.audit as AuditStatus | null | undefined) ?? "none",
+      txHash: pay?.executedTxHash ?? null,
+    });
+    if (r.status === "pagada") out.paid++;
+    if (r.status === "cancelada") out.cancelled++;
+  }
+
   const waiting = await deps.db
     .select({ inv: invoices, pay: payments })
     .from(invoices)
@@ -477,6 +609,15 @@ export async function syncInvoices(deps: AgentDeps): Promise<{ retried: number; 
       if (!(await transition(deps, inv.id, ["pendiente", "aprobada"], { status: "pagada" }))) continue;
       out.paid++;
       const link = await txLink(deps, pay.executedTxHash);
+      // A late clearance from the auditor can still pay it automatically, before anyone signs.
+      if (pay.rule === "auto") {
+        const text = `Ya se pagó la ${what}: el auditor la aprobó y entró en las reglas de pago automático, así que no hizo falta firmar.\nVer movimiento: ${link}`;
+        await deps.notify(inv.uploaderPersonId, text);
+        for (const s of await personsWithRoles(deps.db, SIGNER_ROLES)) {
+          if (s.id !== inv.uploaderPersonId) await deps.notify(s.id, text);
+        }
+        continue;
+      }
       const text = `Ya se pagó la ${what}, con las firmas de la comisión. ¡Gracias por firmar!\nVer movimiento: ${link}`;
       await deps.notify(inv.uploaderPersonId, `Ya se pagó la ${what}. Juntó las firmas necesarias.\nVer movimiento: ${link}`);
       for (const s of await personsWithRoles(deps.db, SIGNER_ROLES)) {

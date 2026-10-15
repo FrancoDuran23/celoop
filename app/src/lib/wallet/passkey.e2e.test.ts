@@ -23,6 +23,7 @@ import {
   keccak256,
   parseEther,
   stringToBytes,
+  zeroAddress,
   type Abi,
   type Address,
   type Hex,
@@ -113,7 +114,7 @@ describe.skipIf(!run)("passkey Safe on a Celo mainnet fork", () => {
       await mined(
         await deploy(deployer, {
           ...policy,
-          args: [token, [safe, signer2.account.address, signer3.account.address], BigInt(2), agent.account.address, BigInt(1000) * E18, BigInt(3000) * E18, `0x${"00".repeat(32)}`],
+          args: [token, [safe, signer2.account.address, signer3.account.address], BigInt(2), agent.account.address, BigInt(1000) * E18, BigInt(3000) * E18, `0x${"00".repeat(32)}`, zeroAddress],
         }),
       )
     ).contractAddress as Address;
