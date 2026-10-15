@@ -1,0 +1,73 @@
+{
+  "$comment": "Cooperadora ficticia para la demo. En local, las safeAddress de los firmantes son cuentas de prueba de anvil (#2, #3 y #4) y setup firma las propuestas con sus claves; en una red real son las Safe con passkey de cada firmante. El proveedor cobra en la cuenta #5 de anvil.",
+  "cooperadora": {
+    "name": "Asociación Cooperadora Escuela N° 412 Juana Azurduy",
+    "school": "Escuela N° 412 Juana Azurduy, San Salvador de Jujuy",
+    "cuit": "30-71234567-8",
+    "ruce": "RUCE-JUJ-0412",
+    "actaPath": "acta-demo.pdf"
+  },
+  "people": [
+    {
+      "name": "Rosa Quispe",
+      "phone": "+5493884000001",
+      "roles": ["socio", "presidente"],
+      "kind": "padre",
+      "safeAddress": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"
+    },
+    {
+      "name": "Marcelo Tolaba",
+      "phone": "+5493884000002",
+      "roles": ["socio", "tesorero"],
+      "kind": "docente",
+      "safeAddress": "0x90F79bf6EB2c4f870365E785982E1f101E93b906"
+    },
+    {
+      "name": "Daniela Cruz",
+      "phone": "+5493884000003",
+      "roles": ["socio", "secretario"],
+      "kind": "padre"
+    },
+    {
+      "name": "Elena Mamani",
+      "phone": "+5493884000004",
+      "roles": ["socio", "revisor"],
+      "kind": "exalumno",
+      "safeAddress": "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65"
+    },
+    {
+      "name": "Jorge Vilte",
+      "phone": "+5493884000005",
+      "roles": ["socio"],
+      "kind": "padre"
+    },
+    {
+      "name": "Librería Don Pepe",
+      "phone": "+5493884000006",
+      "roles": ["proveedor"]
+    },
+    {
+      "name": "Operador técnico",
+      "phone": "+5493884000009",
+      "roles": ["operador"]
+    }
+  ],
+  "vendors": [
+    {
+      "legalName": "Librería Don Pepe",
+      "cuit": "20-12345678-6",
+      "address": "0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc",
+      "phone": "+5493884000006"
+    }
+  ],
+  "budgetLines": [
+    { "slug": "materiales", "name": "Materiales", "amount": "300000", "periodEnd": "2026-12-31" },
+    { "slug": "mantenimiento", "name": "Mantenimiento", "amount": "200000", "periodEnd": "2026-12-31" },
+    { "slug": "comedor", "name": "Comedor", "amount": "400000", "periodEnd": "2026-12-31" },
+    { "slug": "eventos", "name": "Eventos", "amount": "100000", "periodEnd": "2026-12-31" },
+    { "slug": "imprevistos", "name": "Imprevistos", "amount": "50000", "periodEnd": "2026-12-31" },
+    { "slug": "gastos-operativos", "name": "Gastos operativos", "amount": "20000", "periodEnd": "2026-12-31" }
+  ],
+  "caps": { "perTxCap": "50000", "vendorMonthlyCap": "150000" },
+  "threshold": 2
+}
