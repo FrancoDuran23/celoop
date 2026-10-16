@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import { getDb } from "@/db";
 import { linkAllows, linkErrorMessage } from "@/lib/wallet/links";
-import { chainReader, pageChainConfig, treasuryAddress } from "@/lib/wallet/server";
+import { linkScope, pageChainConfig } from "@/lib/wallet/server";
 import { NO_PASSKEY_MESSAGE, firstParam, pageSession } from "@/lib/wallet/session";
 import { loadPaymentView } from "@/lib/wallet/views";
 import { Loading, Problem } from "../../_components/ui";
@@ -31,13 +31,18 @@ async function load(id: string, token: string | null): Promise<Loaded> {
     if (!session.ok) return session;
     if (!linkAllows(session.link, "payment", paymentId)) return { ok: false, message: linkErrorMessage("wrong_target") };
     if (!session.credential || !session.safe) return { ok: false, message: NO_PASSKEY_MESSAGE };
-    const [view, config] = await Promise.all([loadPaymentView(db, chainReader, paymentId, session.safe), pageChainConfig()]);
+    // The link names the cooperative; its treasury is the one being signed on.
+    const scope = await linkScope(db, session.link);
+    const [view, config] = await Promise.all([
+      loadPaymentView(db, scope.chain, paymentId, session.safe, scope.cooperadoraId),
+      pageChainConfig(),
+    ]);
     if (!view) return { ok: false, message: "We couldn't find this payment. The link may be old." };
     return {
       ok: true,
       props: {
         view,
-        treasury: await treasuryAddress(),
+        treasury: scope.treasury,
         signer: { token: token!, credential: session.credential, safe: session.safe, ...config },
         name: session.link.person.name,
       },

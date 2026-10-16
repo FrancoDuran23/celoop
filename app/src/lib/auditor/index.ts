@@ -13,7 +13,7 @@ import { and, desc, eq, inArray, isNull, lt, ne, sql } from "drizzle-orm";
 import { isAddressEqual, keccak256, zeroAddress, type Address, type Hex } from "viem";
 import { audits, chainEvents, contributions, cooperadora, indexerCursor, invoices, payments, vendors } from "@/db/schema";
 import { withLock } from "@/lib/locks";
-import { activeCooperadoras, auditorLock, readJobCursor, rotateAfter, scopedKey, writeJobCursor, type CoopRow } from "@/lib/tenant";
+import { activeCooperadoras, auditorLock, readJobCursor, rotateAfter, scopedKey, scopeId, writeJobCursor, type CoopRow } from "@/lib/tenant";
 import { claimNotice, releaseNotice } from "@/lib/orchestrator/chat-state";
 import { notifyOnce } from "@/lib/orchestrator/deps";
 import { arDate, errorText, formatPesos, invoiceLabel } from "@/lib/orchestrator/format";
@@ -289,7 +289,12 @@ async function vendorHistory(deps: AuditorDeps, vendor: Address, before: bigint)
       await deps.db
         .select({ invoiceId: invoices.invoiceId, tipo: invoices.tipo, ptoVta: invoices.ptoVta, nro: invoices.nro })
         .from(invoices)
-        .where(inArray(sql`lower(${invoices.invoiceId})`, rows.map((r) => r.invoiceId.toLowerCase())))
+        .where(
+          and(
+            eq(invoices.cooperadoraId, scopeId(deps.cooperadoraId)),
+            inArray(sql`lower(${invoices.invoiceId})`, rows.map((r) => r.invoiceId.toLowerCase())),
+          ),
+        )
     ).map((i) => [i.invoiceId!.toLowerCase(), invoiceLabel(i)]),
   );
   return rows.map((r) => ({
@@ -303,8 +308,15 @@ async function vendorHistory(deps: AuditorDeps, vendor: Address, before: bigint)
 type Onchain = Awaited<ReturnType<AuditorDeps["chain"]["payment"]>>;
 
 async function describePayment(deps: AuditorDeps, paymentId: bigint, p: Onchain): Promise<string> {
-  const [v] = await deps.db.select().from(vendors).where(sql`lower(${vendors.address}) = ${p.vendor.toLowerCase()}`);
-  const [inv] = await deps.db.select().from(invoices).where(sql`lower(${invoices.invoiceId}) = ${p.invoiceId.toLowerCase()}`);
+  const coop = scopeId(deps.cooperadoraId);
+  const [v] = await deps.db
+    .select()
+    .from(vendors)
+    .where(and(eq(vendors.cooperadoraId, coop), sql`lower(${vendors.address}) = ${p.vendor.toLowerCase()}`));
+  const [inv] = await deps.db
+    .select()
+    .from(invoices)
+    .where(and(eq(invoices.cooperadoraId, coop), sql`lower(${invoices.invoiceId}) = ${p.invoiceId.toLowerCase()}`));
   const what = inv ? invoiceLabel(inv) : "un comprobante que no está en el sistema";
   return `el pago #${paymentId} (${what}${v ? ` de ${v.legalName}` : ""} por ${formatPesos(p.amount)})`;
 }
@@ -316,13 +328,14 @@ async function tellReviewers(deps: AuditorDeps, row: AuditRow, onchain: Onchain)
     findings.map((f) => `• ${f.text}`).join("\n") +
     `\nAhora lo tienen que firmar o rechazar los firmantes. Informe: ${urls.audit(deps.appUrl, row.paymentId, deps.cooperadoraId)}`;
   for (const r of await personsWithRoles(deps.db, [REVIEWER_ROLE], deps.cooperadoraId)) {
-    await notifyOnce(deps, r.id, `audit-flag:${row.paymentId}`, text);
+    await notifyOnce(deps, r.id, scopedKey(deps.cooperadoraId, `audit-flag:${row.paymentId}`), text);
   }
 }
 
 async function alertOperators(deps: AuditorDeps, key: string, text: string) {
   console.error(text);
-  for (const op of await personsWithRoles(deps.db, [OPERATOR_ROLE], deps.cooperadoraId)) await notifyOnce(deps, op.id, key, text);
+  const scoped = scopedKey(deps.cooperadoraId, key);
+  for (const op of await personsWithRoles(deps.db, [OPERATOR_ROLE])) await notifyOnce(deps, op.id, scoped, text);
 }
 
 export type ReconcileResult =
@@ -383,9 +396,12 @@ export async function reconcileBalance(deps: AuditorDeps): Promise<ReconcileResu
       const text =
         `Auditor: el saldo del tesoro no cierra. En la cadena hay ${formatPesos(onchain)} y, según los aportes y pagos registrados, ` +
         `tendría que haber ${formatPesos(recorded)} (diferencia de ${formatPesos(diff)}). Hay que revisarlo antes de la próxima rendición.`;
-      for (const p of await personsWithRoles(db, [REVIEWER_ROLE, OPERATOR_ROLE], deps.cooperadoraId)) {
-        await notifyOnce(deps, p.id, `reconcile:${arDate(deps.now())}`, text);
-      }
+      const key = scopedKey(deps.cooperadoraId, `reconcile:${arDate(deps.now())}`);
+      const people = [
+        ...(await personsWithRoles(db, [REVIEWER_ROLE], deps.cooperadoraId)),
+        ...(await personsWithRoles(db, [OPERATOR_ROLE])),
+      ];
+      for (const id of new Set(people.map((p) => p.id))) await notifyOnce(deps, id, key, text);
     }
     return { ran: true, block: block.toString(), onchain: onchain.toString(), recorded: recorded.toString(), matches };
   } catch (e) {

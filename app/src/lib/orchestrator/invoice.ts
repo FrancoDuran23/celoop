@@ -9,6 +9,9 @@
 //
 // invoices.invoiceId is set only once an invoice validates, so the unique index on it doubles as
 // the duplicate guard: rejected uploads never block a corrected re-upload.
+//
+// Every query is scoped to deps.cooperadoraId (the demo when unset): budget line ids, payment ids
+// and vendor CUITs repeat across cooperatives, so an unscoped lookup would mix their money.
 import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import type { Address, Hex } from "viem";
 import { agentTxs, audits, budgetIndex, budgetLines, chainEvents, cooperadora, invoices, payments, vendors } from "@/db/schema";
@@ -24,6 +27,7 @@ import {
   type ReadResult,
 } from "@/lib/invoice";
 import { withLock } from "@/lib/locks";
+import { scopedKey, scopeId } from "@/lib/tenant";
 import { explorerTxUrl } from "@/lib/report/format";
 import type { AgentDeps } from "./deps";
 import { arDate, collectStrings, errorText, formatPesos, invoiceLabel, jsonSafe } from "./format";
@@ -33,6 +37,7 @@ import {
   canManageInvoices,
   OPERATOR_ROLE,
   personById,
+  personInCooperadora,
   personsWithRoles,
   REVIEWER_ROLE,
   SIGNER_ROLES,
@@ -71,6 +76,9 @@ const MIME_EXT: Record<string, string> = {
   "image/gif": "gif",
 };
 
+/** The cooperative this work is for. */
+const coopOf = (deps: Pick<AgentDeps, "cooperadoraId">) => scopeId(deps.cooperadoraId);
+
 async function setStatus(deps: AgentDeps, id: number, status: string, reason: string | null = null) {
   await deps.db
     .update(invoices)
@@ -101,13 +109,16 @@ async function vendorOf(deps: AgentDeps, inv: InvoiceRow) {
 
 async function lineOf(deps: AgentDeps, lineId: string | null) {
   if (!lineId) return undefined;
-  const [l] = await deps.db.select().from(budgetLines).where(eq(budgetLines.lineId, lineId));
+  const [l] = await deps.db
+    .select()
+    .from(budgetLines)
+    .where(and(eq(budgetLines.cooperadoraId, coopOf(deps)), eq(budgetLines.lineId, lineId)));
   return l;
 }
 
 async function txLink(deps: AgentDeps, txHash: string | null | undefined): Promise<string> {
-  const [coop] = await deps.db.select({ chainId: cooperadora.chainId }).from(cooperadora);
-  return explorerTxUrl(coop?.chainId, txHash) ?? urls.panel(deps.appUrl);
+  const [coop] = await deps.db.select({ chainId: cooperadora.chainId }).from(cooperadora).where(eq(cooperadora.id, coopOf(deps)));
+  return explorerTxUrl(coop?.chainId, txHash) ?? urls.panel(deps.appUrl, deps.cooperadoraId);
 }
 
 /** "Factura C 0003-00001234 de Librería El Aula por $ 4.000,00" */
@@ -115,7 +126,9 @@ export async function describe(deps: AgentDeps, inv: InvoiceRow): Promise<string
   // Rows not validated yet have no vendorId; the CUIT still names the issuer for the message.
   const v =
     (await vendorOf(deps, inv)) ??
-    (inv.cuit !== null ? (await deps.db.select().from(vendors).where(eq(vendors.cuit, inv.cuit)))[0] : undefined);
+    (inv.cuit !== null
+      ? (await deps.db.select().from(vendors).where(and(eq(vendors.cooperadoraId, inv.cooperadoraId), eq(vendors.cuit, inv.cuit))))[0]
+      : undefined);
   const who = v ? ` de ${v.legalName}` : "";
   const amount = inv.amount ? ` por ${formatPesos(inv.amount)}` : "";
   const label = invoiceLabel(inv);
@@ -123,7 +136,7 @@ export async function describe(deps: AgentDeps, inv: InvoiceRow): Promise<string
 }
 
 async function notifyReviewers(deps: AgentDeps, text: string, buttons?: InlineButton[][]) {
-  for (const r of await personsWithRoles(deps.db, [REVIEWER_ROLE])) await deps.notify(r.id, text, buttons);
+  for (const r of await personsWithRoles(deps.db, [REVIEWER_ROLE], deps.cooperadoraId)) await deps.notify(r.id, text, buttons);
 }
 
 async function toRejected(deps: AgentDeps, inv: InvoiceRow, reason: string) {
@@ -160,7 +173,7 @@ export async function processInvoice(
   const fileUrl = await deps.storeFile(`facturas/${fileHash.slice(2)}.${ext}`, file.bytes, file.mimeType);
   const [inv] = await db
     .insert(invoices)
-    .values({ uploaderPersonId: upload.uploaderPersonId, status: "recibida", fileUrl, fileHash })
+    .values({ cooperadoraId: coopOf(deps), uploaderPersonId: upload.uploaderPersonId, status: "recibida", fileUrl, fileHash })
     .returning();
 
   try {
@@ -216,9 +229,12 @@ async function readAndValidate(deps: AgentDeps, inv: InvoiceRow, file: InvoiceFi
   // The invoice text is data. Anything that reads like payment instructions goes to a person.
   if (looksLikeInjection(collectStrings(read.raw).join("\n"))) return toReview(deps, leida, INJECTION_REASON);
 
-  const [coop] = await db.select().from(cooperadora);
-  if (!coop) throw new Error("cooperadora is not configured");
-  const enabled = await db.select().from(vendors).where(eq(vendors.enabled, true));
+  const [coop] = await db.select().from(cooperadora).where(eq(cooperadora.id, inv.cooperadoraId));
+  if (!coop) throw new Error(`cooperadora ${inv.cooperadoraId} is not configured`);
+  const enabled = await db
+    .select()
+    .from(vendors)
+    .where(and(eq(vendors.cooperadoraId, inv.cooperadoraId), eq(vendors.enabled, true)));
   const invoiceId = invoiceIdOf(f);
   let existing: InvoiceRow | undefined;
 
@@ -226,7 +242,10 @@ async function readAndValidate(deps: AgentDeps, inv: InvoiceRow, file: InvoiceFi
     cooperadoraCuit: coop.cuit,
     enabledVendorCuits: new Set(enabled.map((v) => v.cuit)),
     alreadyPaid: async () => {
-      [existing] = await db.select().from(invoices).where(eq(invoices.invoiceId, invoiceId));
+      [existing] = await db
+        .select()
+        .from(invoices)
+        .where(and(eq(invoices.cooperadoraId, inv.cooperadoraId), eq(invoices.invoiceId, invoiceId)));
       if (existing) return true;
       return deps.chain.isInvoicePaid(invoiceId);
     },
@@ -281,7 +300,7 @@ export async function suggestLine(deps: AgentDeps, inv: InvoiceRow): Promise<str
     const [p] = await deps.db
       .select({ lineId: payments.lineId })
       .from(payments)
-      .where(and(eq(payments.vendor, v.address), eq(payments.status, "executed")))
+      .where(and(eq(payments.cooperadoraId, inv.cooperadoraId), eq(payments.vendor, v.address), eq(payments.status, "executed")))
       .orderBy(desc(payments.executedAt))
       .limit(1);
     if (p) return p.lineId;
@@ -294,7 +313,8 @@ export async function askForLine(deps: AgentDeps, inv: InvoiceRow): Promise<void
   const lines = await deps.db
     .select({ lineId: budgetLines.lineId, slug: budgetLines.slug, name: budgetLines.name, allocated: budgetIndex.allocated, spent: budgetIndex.spent })
     .from(budgetLines)
-    .leftJoin(budgetIndex, eq(budgetIndex.lineId, budgetLines.lineId))
+    .leftJoin(budgetIndex, and(eq(budgetIndex.cooperadoraId, budgetLines.cooperadoraId), eq(budgetIndex.lineId, budgetLines.lineId)))
+    .where(eq(budgetLines.cooperadoraId, inv.cooperadoraId))
     .orderBy(budgetLines.name);
   const suggested = await suggestLine(deps, inv);
   const sorted = [...lines].sort((a, b) => Number(b.lineId === suggested) - Number(a.lineId === suggested));
@@ -316,13 +336,20 @@ export async function chooseLine(
   deps: AgentDeps,
   args: { personId: number; invoiceRowId: number; slug: string },
 ): Promise<InvoiceOutcome> {
-  const person = await personById(deps.db, args.personId);
-  const [inv] = await deps.db.select().from(invoices).where(eq(invoices.id, args.invoiceRowId));
+  const [inv] = await deps.db
+    .select()
+    .from(invoices)
+    .where(and(eq(invoices.id, args.invoiceRowId), eq(invoices.cooperadoraId, coopOf(deps))));
+  // Roles count in the invoice's own cooperative only.
+  const person = await personInCooperadora(deps.db, args.personId, coopOf(deps));
   if (!person || !inv || !(canManageInvoices(person) || person.id === inv.uploaderPersonId)) {
     if (person) await deps.notify(person.id, "Esa factura no la podés gestionar vos.");
     return { invoiceId: args.invoiceRowId, status: inv?.status ?? "desconocida" };
   }
-  const [line] = await deps.db.select().from(budgetLines).where(eq(budgetLines.slug, args.slug));
+  const [line] = await deps.db
+    .select()
+    .from(budgetLines)
+    .where(and(eq(budgetLines.cooperadoraId, inv.cooperadoraId), eq(budgetLines.slug, args.slug)));
   if (!line) {
     await deps.notify(person.id, "No encuentro esa partida. Probá de nuevo con los botones.");
     return { invoiceId: inv.id, status: inv.status };
@@ -450,7 +477,7 @@ async function announceAutoPaid(deps: AgentDeps, inv: InvoiceRow, txHash: string
   await notifyReviewers(
     deps,
     `Pago automático${audited ? " (revisado por el auditor)" : ""}: ${what}, partida ${line?.name ?? "-"}. La cargó ${uploader?.name ?? "la comisión"}.\nVer movimiento: ${link}${extra}`,
-    [[{ text: "Ver la factura", url: inv.fileUrl.startsWith("http") ? inv.fileUrl : urls.panel(deps.appUrl) }]],
+    [[{ text: "Ver la factura", url: inv.fileUrl.startsWith("http") ? inv.fileUrl : urls.panel(deps.appUrl, deps.cooperadoraId) }]],
   );
 }
 
@@ -468,13 +495,19 @@ async function toSignatures(deps: AgentDeps, inv: InvoiceRow, audit?: { note: st
 
 /** Hash of the auditor's transaction for a payment, if this database saw it go out. */
 async function auditTxHash(deps: AgentDeps, paymentId: bigint): Promise<string | null> {
-  const [row] = await deps.db.select({ txHash: agentTxs.txHash }).from(agentTxs).where(eq(agentTxs.key, `audit:payment:${paymentId}`));
+  const [row] = await deps.db
+    .select({ txHash: agentTxs.txHash })
+    .from(agentTxs)
+    .where(eq(agentTxs.key, scopedKey(deps.cooperadoraId, `audit:payment:${paymentId}`)));
   return row?.txHash ?? null;
 }
 
 /** The auditor's observaciones on a payment, as bullet lines, from its own report. */
 async function auditObservations(deps: AgentDeps, paymentId: bigint): Promise<string> {
-  const [row] = await deps.db.select({ findings: audits.findings }).from(audits).where(eq(audits.paymentId, paymentId));
+  const [row] = await deps.db
+    .select({ findings: audits.findings })
+    .from(audits)
+    .where(and(eq(audits.cooperadoraId, coopOf(deps)), eq(audits.paymentId, paymentId)));
   const findings = ((row?.findings as { level: string; text: string }[] | undefined) ?? []).filter((f) => f.level === "observacion");
   return findings.length > 0 ? findings.map((f) => `• ${f.text}`).join("\n") : "• Ver el informe del auditor.";
 }
@@ -522,7 +555,8 @@ export async function advanceAudited(deps: AgentDeps, inv: InvoiceRow, state: Au
     await toSignatures(deps, row, { note: "El auditor todavía no la revisó, así que no puede salir automática." });
     const text = `Atención operador: el auditor no revisó el pago #${inv.paymentId} en ${AUDIT_TIMEOUT_MS / 60_000} minutos. Lo mandé a firmas. Revisá que /api/auditor esté corriendo.`;
     console.error(text);
-    for (const op of await personsWithRoles(deps.db, [OPERATOR_ROLE])) await notifyOnce(deps, op.id, `audit-timeout:${inv.paymentId}`, text);
+    const key = scopedKey(deps.cooperadoraId, `audit-timeout:${inv.paymentId}`);
+    for (const op of await personsWithRoles(deps.db, [OPERATOR_ROLE])) await notifyOnce(deps, op.id, key, text);
   }
   return { invoiceId: inv.id, status: "pendiente" };
 }
@@ -532,9 +566,9 @@ async function requestSignatures(deps: AgentDeps, inv: InvoiceRow, what: string,
   const summary =
     `Hay un pago que necesita tu firma:\n${what}\nPartida: ${lineName}\nLa cargó: ${uploader?.name ?? "la comisión"}` +
     (note ? `\n\n${note}` : "");
-  for (const signer of await personsWithRoles(deps.db, SIGNER_ROLES)) {
+  for (const signer of await personsWithRoles(deps.db, SIGNER_ROLES, deps.cooperadoraId)) {
     if (signer.safeAddress && inv.paymentId !== null) {
-      const url = await paymentSignUrl(deps.db, deps.appUrl, signer.id, inv.paymentId, deps.now());
+      const url = await paymentSignUrl(deps.db, deps.appUrl, signer.id, inv.paymentId, deps.now(), coopOf(deps));
       await deps.notify(
         signer.id,
         `${summary}\n\nAbrí el link en Chrome o Safari (no dentro de Telegram) para firmar con tu huella o tu cara. Vence en 24 horas.`,
@@ -547,7 +581,7 @@ async function requestSignatures(deps: AgentDeps, inv: InvoiceRow, what: string,
 }
 
 export async function notifySignerWithoutPasskey(deps: AgentDeps, signer: Person, summary: string) {
-  const url = await enrollUrl(deps.db, deps.appUrl, signer.id, deps.now());
+  const url = await enrollUrl(deps.db, deps.appUrl, signer.id, deps.now(), coopOf(deps));
   await deps.notify(
     signer.id,
     `${summary}\n\nPara poder firmar, primero creá tu firma con la huella o la cara del teléfono. Abrí el link en Chrome o Safari.`,
@@ -560,7 +594,7 @@ async function currentThreshold(deps: AgentDeps): Promise<number | null> {
   const [ev] = await deps.db
     .select({ args: chainEvents.args })
     .from(chainEvents)
-    .where(eq(chainEvents.eventName, "SignersSet"))
+    .where(and(eq(chainEvents.cooperadoraId, coopOf(deps)), eq(chainEvents.eventName, "SignersSet")))
     .orderBy(desc(chainEvents.blockNumber), desc(chainEvents.logIndex))
     .limit(1);
   const t = Number((ev?.args as { threshold?: unknown } | undefined)?.threshold);
@@ -573,7 +607,13 @@ async function currentThreshold(deps: AgentDeps): Promise<number | null> {
  */
 export async function syncInvoices(deps: AgentDeps): Promise<{ retried: number; paid: number; cancelled: number; approved: number }> {
   const out = { retried: 0, paid: 0, cancelled: 0, approved: 0 };
-  for (const inv of await deps.db.select().from(invoices).where(eq(invoices.status, "propuesta")).orderBy(invoices.id)) {
+  const coop = coopOf(deps);
+  const proposed = await deps.db
+    .select()
+    .from(invoices)
+    .where(and(eq(invoices.cooperadoraId, coop), eq(invoices.status, "propuesta")))
+    .orderBy(invoices.id);
+  for (const inv of proposed) {
     out.retried++;
     await proposeInvoice(deps, inv);
   }
@@ -582,8 +622,8 @@ export async function syncInvoices(deps: AgentDeps): Promise<{ retried: number; 
   const auditing = await deps.db
     .select({ inv: invoices, pay: payments })
     .from(invoices)
-    .leftJoin(payments, eq(payments.paymentId, invoices.paymentId))
-    .where(eq(invoices.status, "auditando"))
+    .leftJoin(payments, and(eq(payments.cooperadoraId, invoices.cooperadoraId), eq(payments.paymentId, invoices.paymentId)))
+    .where(and(eq(invoices.cooperadoraId, coop), eq(invoices.status, "auditando")))
     .orderBy(invoices.id);
   for (const { inv, pay } of auditing) {
     const r = await advanceAudited(deps, inv, {
@@ -598,8 +638,8 @@ export async function syncInvoices(deps: AgentDeps): Promise<{ retried: number; 
   const waiting = await deps.db
     .select({ inv: invoices, pay: payments })
     .from(invoices)
-    .innerJoin(payments, eq(payments.paymentId, invoices.paymentId))
-    .where(inArray(invoices.status, ["pendiente", "aprobada"]))
+    .innerJoin(payments, and(eq(payments.cooperadoraId, invoices.cooperadoraId), eq(payments.paymentId, invoices.paymentId)))
+    .where(and(eq(invoices.cooperadoraId, coop), inArray(invoices.status, ["pendiente", "aprobada"])))
     .orderBy(invoices.id);
   let threshold: number | null | undefined;
 
@@ -613,14 +653,14 @@ export async function syncInvoices(deps: AgentDeps): Promise<{ retried: number; 
       if (pay.rule === "auto") {
         const text = `Ya se pagó la ${what}: el auditor la aprobó y entró en las reglas de pago automático, así que no hizo falta firmar.\nVer movimiento: ${link}`;
         await deps.notify(inv.uploaderPersonId, text);
-        for (const s of await personsWithRoles(deps.db, SIGNER_ROLES)) {
+        for (const s of await personsWithRoles(deps.db, SIGNER_ROLES, deps.cooperadoraId)) {
           if (s.id !== inv.uploaderPersonId) await deps.notify(s.id, text);
         }
         continue;
       }
       const text = `Ya se pagó la ${what}, con las firmas de la comisión. ¡Gracias por firmar!\nVer movimiento: ${link}`;
       await deps.notify(inv.uploaderPersonId, `Ya se pagó la ${what}. Juntó las firmas necesarias.\nVer movimiento: ${link}`);
-      for (const s of await personsWithRoles(deps.db, SIGNER_ROLES)) {
+      for (const s of await personsWithRoles(deps.db, SIGNER_ROLES, deps.cooperadoraId)) {
         if (s.id !== inv.uploaderPersonId) await deps.notify(s.id, text);
       }
     } else if (pay.status === "rejected") {
@@ -628,7 +668,7 @@ export async function syncInvoices(deps: AgentDeps): Promise<{ retried: number; 
       out.cancelled++;
       const text = `Los firmantes rechazaron el pago de la ${what}. No se pagó.`;
       await deps.notify(inv.uploaderPersonId, text);
-      for (const s of await personsWithRoles(deps.db, SIGNER_ROLES)) {
+      for (const s of await personsWithRoles(deps.db, SIGNER_ROLES, deps.cooperadoraId)) {
         if (s.id !== inv.uploaderPersonId) await deps.notify(s.id, text);
       }
     } else if (inv.status === "pendiente" && pay.approvals > 0) {

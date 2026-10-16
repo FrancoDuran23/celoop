@@ -2,13 +2,13 @@
 // menu by role and hands real work to the orchestrator. Messages to known people go through
 // live().notify; only the "share your contact" prompt (before we know who it is) uses ctx.reply.
 import { AsyncLocalStorage } from "node:async_hooks";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { Bot, InlineKeyboard, Keyboard, type Context } from "grammy";
 import type { UserFromGetMe } from "grammy/types";
-import { persons, reports } from "@/db/schema";
+import { invoices, persons, reports } from "@/db/schema";
 import { getFlow, setFlow, setSelectedCooperadora } from "@/lib/orchestrator/chat-state";
 import { createContributionIntent, SUGGESTED_AMOUNTS } from "@/lib/orchestrator/contribute";
-import type { AgentDeps } from "@/lib/orchestrator/deps";
+import { forCooperadora, type AgentDeps } from "@/lib/orchestrator/deps";
 import { formatPesos, parseAmount, pesos } from "@/lib/orchestrator/format";
 import { chooseLine, notifySignerWithoutPasskey, processInvoice } from "@/lib/orchestrator/invoice";
 import { enrollUrl, paymentSignUrl, proposeUrl, reviewUrl, vendorUrl } from "@/lib/orchestrator/links";
@@ -17,10 +17,12 @@ import {
   firstName,
   isSigner,
   isVendor,
+  personInCooperadora,
   type Person,
 } from "@/lib/orchestrator/people";
 import { listForReview, resolveReview } from "@/lib/orchestrator/review";
 import { periodLabelEs } from "@/lib/report/format";
+import { cooperadoraById, scopeId } from "@/lib/tenant";
 import type { Assistant } from "./assistant";
 import { MENU, matchMenu, menuActions, menuKeyboard, type MenuAction } from "./menu";
 import type { InlineButton } from "./notify";
@@ -45,17 +47,22 @@ export const TEXT = {
   ownContact: "Necesito tu propio contacto: tocá el botón «Compartir mi contacto» de abajo.",
   notAllowed: "Esa opción no está disponible para vos.",
   sorry: "Uy, tuve un problema y no pude terminar. Probá de nuevo en un rato.",
+  noActiveCoop: "Todavía no estás en ninguna cooperadora activa. Si te sumaron a una nueva, te aviso apenas la den de alta.",
 };
 
 export function createBot(opts: { token: string; botInfo?: UserFromGetMe; deps: BotDeps }): Bot {
   const bot = new Bot(opts.token, opts.botInfo ? { botInfo: opts.botInfo } : undefined);
   const deps = opts.deps;
   const { db } = deps;
-  const coopAls = new AsyncLocalStorage<number>();
-  const live = (): BotDeps => {
-    const id = coopAls.getStore();
-    return id == null ? deps : { ...deps, cooperadoraId: id };
-  };
+  // Each update runs with the deps of the cooperative the chat is working on: its id for every
+  // query and its own treasury for every chain read and send.
+  const coopAls = new AsyncLocalStorage<BotDeps>();
+  const live = (): BotDeps => coopAls.getStore() ?? deps;
+  async function inCoop<T>(cooperadoraId: number, fn: () => Promise<T>): Promise<T> {
+    const row = await cooperadoraById(db, cooperadoraId);
+    const scoped = row ? forCooperadora(deps, row) : { ...deps, cooperadoraId };
+    return coopAls.run(scoped, fn);
+  }
   const chooser = (choices: CoopChoice[]) =>
     new InlineKeyboard(choices.map((c) => [{ text: `${c.name} · ${c.school}`, callback_data: `coop:${c.id}` }]));
   const download =
@@ -78,11 +85,16 @@ export function createBot(opts: { token: string; botInfo?: UserFromGetMe; deps: 
       await db.update(persons).set({ telegramChatId: BigInt(ctx.chat.id) }).where(eq(persons.id, p.id));
       p.telegramChatId = BigInt(ctx.chat.id);
     }
-    if (p && ctx.chat && coopAls.getStore() != null) {
-      const bound = await resolveChatCooperadora(db, p, BigInt(ctx.chat.id));
-      if ("person" in bound) return bound.person;
-    }
+    // Inside a cooperative, the person carries the roles they hold there.
+    const scope = coopAls.getStore();
+    if (p && scope?.cooperadoraId != null) return personInCooperadora(db, p.id, scope.cooperadoraId);
     return p;
+  }
+
+  /** The cooperative an invoice row belongs to, for buttons on messages about it. */
+  async function invoiceCooperadora(invoiceRowId: number): Promise<number | undefined> {
+    const [row] = await db.select({ cooperadoraId: invoices.cooperadoraId }).from(invoices).where(eq(invoices.id, invoiceRowId));
+    return row?.cooperadoraId;
   }
 
   const sendMenu = (p: Person, text: string) => live().notify(p.id, text, menuKeyboard(p));
@@ -115,7 +127,12 @@ export function createBot(opts: { token: string; botInfo?: UserFromGetMe; deps: 
           await ctx.reply("Pertenecés a más de una cooperadora. ¿Con cuál seguimos?", { reply_markup: chooser(bound.choose) });
           return;
         }
-        return await coopAls.run(bound.cooperadoraId, () => next());
+        if ("none" in bound) return void (await ctx.reply(TEXT.noActiveCoop));
+        // A button on a message about an invoice acts on that invoice's cooperative, even if the
+        // chat has moved on to another one since. The handlers check the person's roles there.
+        const invoiceRow = /^(?:rev:(?:ok|no)|line):(\d+)/.exec(ctx.callbackQuery?.data ?? "")?.[1];
+        const coopId = (invoiceRow && (await invoiceCooperadora(Number(invoiceRow)))) || bound.cooperadoraId;
+        return await inCoop(coopId, () => next());
       }
       await next();
     } catch (e) {
@@ -155,16 +172,17 @@ export function createBot(opts: { token: string; botInfo?: UserFromGetMe; deps: 
       });
       return;
     }
-    await coopAls.run(bound.cooperadoraId, async () => {
-    await sendMenu(bound.person, welcome(bound.person));
-    if (isSigner(bound.person) && !bound.person.safeAddress) {
-      const url = await enrollUrl(db, live().appUrl, linked.id, live().now());
-      await live().notify(
-        bound.person.id,
-        "Como sos firmante, necesitás crear tu firma con la huella o la cara del teléfono. Es un minuto. Abrí el link en Chrome o Safari (no dentro de Telegram).",
-        [[{ text: "Crear mi firma", url }]],
-      );
-    }
+    if ("none" in bound) return void (await ctx.reply(TEXT.noActiveCoop, { reply_markup: { remove_keyboard: true } }));
+    await inCoop(bound.cooperadoraId, async () => {
+      await sendMenu(bound.person, welcome(bound.person));
+      if (isSigner(bound.person) && !bound.person.safeAddress) {
+        const url = await enrollUrl(db, live().appUrl, linked.id, live().now(), bound.cooperadoraId);
+        await live().notify(
+          bound.person.id,
+          "Como sos firmante, necesitás crear tu firma con la huella o la cara del teléfono. Es un minuto. Abrí el link en Chrome o Safari (no dentro de Telegram).",
+          [[{ text: "Crear mi firma", url }]],
+        );
+      }
     });
   });
 
@@ -180,7 +198,8 @@ export function createBot(opts: { token: string; botInfo?: UserFromGetMe; deps: 
       if ("choose" in bound) {
         return void (await ctx.reply("Esa cooperadora no está en tu lista.", { reply_markup: chooser(bound.choose) }));
       }
-      return coopAls.run(bound.cooperadoraId, () => sendMenu(bound.person, welcome(bound.person)));
+      if ("none" in bound) return void (await ctx.reply(TEXT.noActiveCoop));
+      return inCoop(bound.cooperadoraId, () => sendMenu(bound.person, welcome(bound.person)));
     }
     const p = await findPerson(ctx);
     if (!p) {
@@ -337,7 +356,7 @@ export function createBot(opts: { token: string; botInfo?: UserFromGetMe; deps: 
         for (const x of pending.slice(0, 5)) {
           lines.push(`• #${x.paymentId} · ${x.vendor} · ${formatPesos(x.amount)} · ${x.lineName} · ${x.approvals} de ${x.threshold} firmas`);
           if (isSigner(p) && p.safeAddress) {
-            const url = await paymentSignUrl(db, live().appUrl, p.id, BigInt(x.paymentId), live().now());
+            const url = await paymentSignUrl(db, live().appUrl, p.id, BigInt(x.paymentId), live().now(), live().cooperadoraId);
             buttons.push([{ text: `Revisar y firmar #${x.paymentId}`, url }]);
           }
         }
@@ -348,7 +367,7 @@ export function createBot(opts: { token: string; botInfo?: UserFromGetMe; deps: 
       }
       case "proponer": {
         if (!p.safeAddress) return notifySignerWithoutPasskey(live(), p, "Para proponer un cambio primero tenés que crear tu firma.");
-        const url = await proposeUrl(db, live().appUrl, p.id, live().now());
+        const url = await proposeUrl(db, live().appUrl, p.id, live().now(), live().cooperadoraId);
         return live().notify(
           p.id,
           "Desde este link podés proponer mover plata entre partidas (con el motivo, que queda público) o reanudar los pagos si están en pausa. El cambio se aplica cuando junta las firmas necesarias. Abrilo en Chrome o Safari.",
@@ -356,9 +375,13 @@ export function createBot(opts: { token: string; botInfo?: UserFromGetMe; deps: 
         );
       }
       case "revisar": {
-        const [draft] = await db.select().from(reports).where(eq(reports.status, "borrador")).orderBy(reports.period);
+        const [draft] = await db
+          .select()
+          .from(reports)
+          .where(and(eq(reports.cooperadoraId, scopeId(live().cooperadoraId)), eq(reports.status, "borrador")))
+          .orderBy(reports.period);
         if (!draft) return live().notify(p.id, "No hay ninguna rendición esperando tu revisión.");
-        const url = await reviewUrl(db, live().appUrl, p.id, draft.period, live().now());
+        const url = await reviewUrl(db, live().appUrl, p.id, draft.period, live().now(), live().cooperadoraId);
         return live().notify(
           p.id,
           `La rendición de ${periodLabelEs(draft.period)} está en borrador. Revisala y, si está bien, dale el visto bueno desde la página.`,
@@ -374,7 +397,7 @@ export function createBot(opts: { token: string; botInfo?: UserFromGetMe; deps: 
       }
       case "misCobros": {
         if (!isVendor(p)) return live().notify(p.id, TEXT.notAllowed);
-        const url = await vendorUrl(db, live().appUrl, p.id, live().now());
+        const url = await vendorUrl(db, live().appUrl, p.id, live().now(), live().cooperadoraId);
         return live().notify(
           p.id,
           "En tu página ves lo que te pagó la cooperadora y podés pasarlo a tu cuenta bancaria. Abrila en Chrome o Safari.",

@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import type { Address, Hex } from "viem";
 import { contributionIntents, contributions } from "@/db/schema";
+import { scopeId } from "@/lib/tenant";
 import type { AgentDeps } from "./deps";
 import { pesosDecimal } from "./format";
 
@@ -40,6 +41,7 @@ export async function createContributionIntent(
   const boxAddress = await deps.chain.boxAddress(ref);
   await deps.db.insert(contributionIntents).values({
     ref,
+    cooperadoraId: scopeId(deps.cooperadoraId),
     personId: args.personId,
     suggestedAmount: args.amount.toString(),
     boxAddress,
@@ -50,11 +52,17 @@ export async function createContributionIntent(
 }
 
 /** A person's money contributions, newest first. */
-export async function contributionsOf(deps: Pick<AgentDeps, "db">, personId: number, limit = 10) {
+export async function contributionsOf(deps: Pick<AgentDeps, "db" | "cooperadoraId">, personId: number, limit = 10) {
   return deps.db
     .select()
     .from(contributions)
-    .where(and(eq(contributions.personId, personId), eq(contributions.kind, "dinero")))
+    .where(
+      and(
+        eq(contributions.cooperadoraId, scopeId(deps.cooperadoraId)),
+        eq(contributions.personId, personId),
+        eq(contributions.kind, "dinero"),
+      ),
+    )
     .orderBy(desc(contributions.occurredAt))
     .limit(limit);
 }

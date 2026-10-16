@@ -1,10 +1,11 @@
 // Data for the public panel at "/". Plain JSON (strings, no bigint) so it can cross the
 // cache boundary. Contributions are only ever aggregated: no names, no per-person rows.
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import type { Db } from "@/db";
 import {
   approvals, budgetIndex, budgetLines, contributions, cooperadora, invoices, payments, reports,
 } from "@/db/schema";
+import { scopeId } from "@/lib/tenant";
 import { executedChanges, loadLookups } from "./changes";
 import { formatCuit, monthKey, sumBase } from "./format";
 import type { BudgetChangeRow } from "./types";
@@ -26,6 +27,8 @@ export interface PanelPending {
   audit: "cleared" | "flagged" | null;
 }
 export interface PanelData {
+  /** Which cooperative this is, so links to its reports and audits carry `?c=`. */
+  cooperadoraId: number;
   header: { cooperadora: string; school: string; cuit: string; ruce: string | null; chainId: number };
   balance: string;
   balanceSource: "chain" | "db";
@@ -44,16 +47,19 @@ export interface PanelOptions {
   now?: Date;
   /** Live balance from the chain, in base units. Null or a failure falls back to the database. */
   liveBalance?: () => Promise<bigint | string | null>;
+  /** Which cooperative's panel. The demo when unset. */
+  cooperadoraId?: number;
 }
 
 export async function getPanelData(db: Db, opts: PanelOptions = {}): Promise<PanelData | null> {
   const now = opts.now ?? new Date();
-  const [coop] = await db.select().from(cooperadora);
+  const id = scopeId(opts.cooperadoraId);
+  const [coop] = await db.select().from(cooperadora).where(eq(cooperadora.id, id));
   if (!coop) return null;
 
-  const l = await loadLookups(db);
-  const lines = await db.select().from(budgetLines);
-  const index = await db.select().from(budgetIndex);
+  const l = await loadLookups(db, id);
+  const lines = await db.select().from(budgetLines).where(eq(budgetLines.cooperadoraId, id));
+  const index = await db.select().from(budgetIndex).where(eq(budgetIndex.cooperadoraId, id));
   const idx = new Map(index.map((i) => [i.lineId.toLowerCase(), i]));
   const nowSec = Math.floor(now.getTime() / 1000);
 
@@ -70,9 +76,9 @@ export async function getPanelData(db: Db, opts: PanelOptions = {}): Promise<Pan
     })
     .sort((a, b) => a.name.localeCompare(b.name, "es"));
 
-  const allContributions = await db.select().from(contributions);
+  const allContributions = await db.select().from(contributions).where(eq(contributions.cooperadoraId, id));
   const money = allContributions.filter((c) => c.kind === "dinero");
-  const allPayments = await db.select().from(payments);
+  const allPayments = await db.select().from(payments).where(eq(payments.cooperadoraId, id));
   const executed = allPayments.filter((p) => p.status === "executed");
 
   const dbBalance = sumBase(money.map((c) => c.amount)) - sumBase(executed.map((p) => p.amount));
@@ -103,7 +109,7 @@ export async function getPanelData(db: Db, opts: PanelOptions = {}): Promise<Pan
     .map(([month, v]) => ({ month, count: v.count, total: v.total.toString() }));
 
   const lineName = (id: string) => lines.find((x) => x.lineId.toLowerCase() === id.toLowerCase())?.name ?? "Sin partida";
-  const invoiceRows = await db.select().from(invoices);
+  const invoiceRows = await db.select().from(invoices).where(eq(invoices.cooperadoraId, id));
   const vendorCuit = new Map<string, string | null>();
   const invFor = (p: (typeof allPayments)[number]) =>
     invoiceRows.find((i) => i.invoiceId && i.invoiceId.toLowerCase() === p.invoiceId.toLowerCase()) ??
@@ -133,7 +139,10 @@ export async function getPanelData(db: Db, opts: PanelOptions = {}): Promise<Pan
 
   const pending: PanelPending[] = [];
   for (const p of allPayments.filter((x) => x.status === "pending")) {
-    const signed = await db.select().from(approvals).where(eq(approvals.targetId, p.paymentId));
+    const signed = await db
+      .select()
+      .from(approvals)
+      .where(and(eq(approvals.cooperadoraId, id), eq(approvals.targetId, p.paymentId)));
     const count = Math.max(p.approvals, signed.filter((a) => a.target === "payment").length);
     pending.push({
       paymentId: p.paymentId.toString(), vendor: vendorOf(p), lineName: lineName(p.lineId),
@@ -142,10 +151,15 @@ export async function getPanelData(db: Db, opts: PanelOptions = {}): Promise<Pan
     });
   }
 
-  const changes = (await executedChanges(db)).reverse();
-  const published = await db.select().from(reports).where(eq(reports.status, "publicada")).orderBy(desc(reports.period));
+  const changes = (await executedChanges(db, undefined, id)).reverse();
+  const published = await db
+    .select()
+    .from(reports)
+    .where(and(eq(reports.cooperadoraId, id), eq(reports.status, "publicada")))
+    .orderBy(desc(reports.period));
 
   return {
+    cooperadoraId: id,
     header: { cooperadora: coop.name, school: coop.school, cuit: formatCuit(coop.cuit), ruce: coop.ruce, chainId: coop.chainId },
     balance: balance.toString(), balanceSource,
     expiredBudget: panelLines.some((x) => x.expired),

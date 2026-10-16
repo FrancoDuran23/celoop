@@ -69,6 +69,16 @@ Quien quiera abrir una cooperadora entra a `/start`, invita a los firmantes (cad
 
 El bot es uno solo (`@Minga_coop_bot`). Si una persona está en más de una cooperadora, elige cuál con los botones del chat.
 
+**Cómo se separan.** Los ids de partidas, pagos y propuestas se repiten entre tesoros, y un mismo CUIT puede ser proveedor de varias cooperadoras. Por eso:
+
+- Toda consulta lleva su `cooperadora_id`. El tick, el auditor y el bot trabajan con `forCooperadora(deps, fila)`: el id de esa cooperadora y un puerto de cadena apuntado a su propio tesoro. Si no se nombra ninguna, es la demo (`scopeId`), nunca "todas".
+- Los roles son por cooperadora (`memberships`). `persons.roles` es el padrón de la demo y solo cuenta mientras la demo no tenga memberships (bases viejas y tests); el alta nueva nunca escribe ahí. El operador sí es de la plataforma y recibe las alertas de todas.
+- Cada link de firma, de alta, de proveedor y de revisión guarda su cooperadora. Las páginas de `/firmar`, `/proveedor` y el bundler usan el tesoro de esa cooperadora (`linkScope`).
+- Las páginas públicas toman `?c=<id>`: `/ledger?c=2`, `/rendicion/2026-10?c=2`, `/auditoria/1?c=2`. Sin `c` muestran la demo.
+- El alta no deja invitar como firmante a un teléfono que ya está en otra cooperadora: su firma (el Safe con passkey) es de esa persona.
+
+`src/lib/orchestrator/multi-tenant.test.ts` lo prueba con dos cooperadoras que comparten partida, CUIT de proveedor y número de pago.
+
 La variable de entorno del contrato de la plataforma es `FACTORY_ADDRESS`. `TREASURY_ADDRESS` y `BOX_FACTORY_ADDRESS` quedan como respaldo opcional para un deploy viejo o para los tests de integración; si no están, la app usa la única cooperadora activa, o la que dice la ruta o la sesión.
 
 ### Migración
@@ -84,7 +94,7 @@ Agrega `cooperadora_id` con default `1` (la demo no se mueve de fila), crea la s
 ### Deploy de la factory y del worker
 
 1. **Factory.** Corré `setup.ts` como en el paso 5 (en mainnet, con `--yes`). El script imprime `FACTORY_ADDRESS`. Pegala en Vercel. El tesoro y el box factory de la demo quedan en la fila, no hace falta repetirlos en el env. Recién cuando esa fila está cargada se pueden sacar `TREASURY_ADDRESS` y `BOX_FACTORY_ADDRESS` si venían de un deploy anterior.
-2. **App.** Redeploy de la rama `FrancoDuran23/front` en Vercel, con `FACTORY_ADDRESS` y el mismo `TICK_SECRET` de siempre.
+2. **App.** Redeploy de `main` en Vercel, con `FACTORY_ADDRESS` y el mismo `TICK_SECRET` de siempre.
 3. **Cron.** Desde la raíz del repo:
 
    ```bash

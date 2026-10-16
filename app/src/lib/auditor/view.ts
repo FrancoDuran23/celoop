@@ -2,6 +2,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import type { Db } from "@/db";
 import { audits, cooperadora, invoices, payments, vendors } from "@/db/schema";
+import { scopeId } from "@/lib/tenant";
 import { formatCuit, formatComprobante, invoiceTypeLabel } from "@/lib/report/format";
 import type { Finding } from "./checks";
 
@@ -28,7 +29,7 @@ export async function loadAuditView(db: Db, paymentId: bigint, cooperadoraId?: n
   const rows = await db
     .select()
     .from(audits)
-    .where(and(eq(audits.paymentId, paymentId), cooperadoraId != null ? eq(audits.cooperadoraId, cooperadoraId) : undefined));
+    .where(and(eq(audits.paymentId, paymentId), eq(audits.cooperadoraId, scopeId(cooperadoraId))));
   if (rows.length !== 1) return null;
   const row = rows[0];
   const [coop] = await db.select({ chainId: cooperadora.chainId }).from(cooperadora).where(eq(cooperadora.id, row.cooperadoraId));
@@ -70,6 +71,6 @@ export async function loadAuditJson(db: Db, paymentId: bigint, cooperadoraId?: n
   const rows = await db
     .select({ json: audits.reportJson })
     .from(audits)
-    .where(and(eq(audits.paymentId, paymentId), cooperadoraId != null ? eq(audits.cooperadoraId, cooperadoraId) : undefined));
+    .where(and(eq(audits.paymentId, paymentId), eq(audits.cooperadoraId, scopeId(cooperadoraId))));
   return rows.length === 1 ? rows[0].json : null;
 }

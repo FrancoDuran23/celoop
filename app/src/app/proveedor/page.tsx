@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import { getDb } from "@/db";
 import { warsAddress } from "@/lib/chain/treasury";
 import { env } from "@/lib/env";
-import { chainReader, pageChainConfig } from "@/lib/wallet/server";
+import { linkScope, pageChainConfig } from "@/lib/wallet/server";
 import { firstParam, pageSession } from "@/lib/wallet/session";
 import { loadVendorView } from "@/lib/wallet/views";
 import { Loading, PageTitle, Problem } from "../firmar/_components/ui";
@@ -30,9 +30,10 @@ async function load(token: string | null): Promise<Loaded> {
     if (!session.ok) return session;
     const { link, credential, safe } = session;
     if (!credential || !safe) return { ok: true, enroll: { token: token!, name: link.person.name, rpId: env().RP_ID } };
-    const view = await loadVendorView(db, chainReader, link.person.id, safe);
+    const scope = await linkScope(db, link);
+    const view = await loadVendorView(db, scope.chain, link.person.id, safe, scope.cooperadoraId);
     if (!view) return { ok: false, message: "We couldn't find your vendor details. Let the co-op's board know." };
-    const [config, wars] = await Promise.all([pageChainConfig(), warsAddress()]);
+    const [config, wars] = await Promise.all([pageChainConfig(), warsAddress({ db, treasury: scope.treasury })]);
     return { ok: true, panel: { view, wars, name: link.person.name, signer: { token: token!, credential, safe, ...config } } };
   } catch (error) {
     console.error(error);

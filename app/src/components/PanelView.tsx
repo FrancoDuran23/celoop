@@ -2,6 +2,7 @@ import Link from "next/link";
 import { formatDate, MONTHS_EN, periodLabel } from "@/lib/report/format";
 import type { PanelData } from "@/lib/report/panel";
 import { APP_NAME } from "@/lib/brand";
+import { coopQuery } from "@/lib/coop-query";
 import { Banner, Tag } from "./Banner";
 import { Robot, Sparks } from "./Brand";
 import { Card } from "./Card";
@@ -35,6 +36,7 @@ export function PanelView({ data }: { data: PanelData | null }) {
     );
   }
   const { header } = data;
+  const q = coopQuery(data.cooperadoraId);
   return (
     <main className="mx-auto flex max-w-4xl flex-col gap-5 px-4 py-6">
       <section aria-labelledby="title" className="overflow-hidden rounded-2xl border-[3px] border-ink bg-surface shadow-hard">
@@ -136,7 +138,7 @@ export function PanelView({ data }: { data: PanelData | null }) {
                   {e.invoiceUrl ? (
                     <a href={e.invoiceUrl} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold">View invoice</a>
                   ) : null}
-                  {e.audit ? <a href={`/auditoria/${e.paymentId}`} className="text-sm font-semibold">Auditor’s report</a> : null}
+                  {e.audit ? <a href={`/auditoria/${e.paymentId}${q}`} className="text-sm font-semibold">Auditor’s report</a> : null}
                   <TxLink txHash={e.txHash} chainId={header.chainId} />
                 </div>
               </li>
@@ -164,7 +166,7 @@ export function PanelView({ data }: { data: PanelData | null }) {
                 {p.audit ? (
                   <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1">
                     {p.audit === "flagged" ? <Tag tone="warn">Flagged by the auditor</Tag> : <Tag tone="ok">Reviewed by the auditor</Tag>}
-                    <a href={`/auditoria/${p.paymentId}`} className="text-sm font-semibold">Auditor’s report</a>
+                    <a href={`/auditoria/${p.paymentId}${q}`} className="text-sm font-semibold">Auditor’s report</a>
                   </div>
                 ) : null}
               </li>
@@ -198,10 +200,10 @@ export function PanelView({ data }: { data: PanelData | null }) {
           <ul className="flex flex-col gap-2">
             {data.publishedReports.map((r) => (
               <li key={r.period} className="flex flex-wrap gap-x-4">
-                <Link href={`/rendicion/${r.period}`} className="font-bold">
+                <Link href={`/rendicion/${r.period}${q}`} className="font-bold">
                   Report for {periodLabel(r.period)}
                 </Link>
-                <a href={`/rendicion/${r.period}/pdf`} className="text-sm font-semibold">Download PDF</a>
+                <a href={`/rendicion/${r.period}/pdf${q}`} className="text-sm font-semibold">Download PDF</a>
               </li>
             ))}
           </ul>

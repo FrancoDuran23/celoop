@@ -7,12 +7,14 @@
 //   written by applyExecutedProposal once the chain says the proposal executed.
 // Everything is checked against the transaction: the ProposalCreated event, its proposer (the link's
 // Safe) and its data.
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { getAddress, isAddressEqual, parseEventLogs, type Address, type Hex } from "viem";
 import { z } from "zod";
 import type { Db } from "@/db";
 import { budgetLines, persons, proposals, vendors } from "@/db/schema";
 import { treasuryPolicyAbi } from "@/lib/chain/abi";
+import { grantRole, VENDOR_ROLE } from "@/lib/orchestrator/people";
+import { scopeId } from "@/lib/tenant";
 import { resolveSignLink, linkOwnsSafe } from "./links";
 import { SLUG_PATTERN, lineIdOf } from "./proposal-builder";
 import { decodeProposal, proposalKindName, reasonHash } from "./proposals";
@@ -53,7 +55,7 @@ export async function recordProposal(input: unknown, deps: Deps): Promise<Reason
   const kind = proposalKindName(event.args.kind);
   const decoded = decodeProposal(kind, event.args.data);
   const meta: PendingMeta = {};
-  const cooperadoraId = link.cooperadoraId ?? 1;
+  const cooperadoraId = scopeId(link.cooperadoraId);
   let motive: string | null = null;
 
   if (decoded.kind === "MoveBudget") {
@@ -112,26 +114,35 @@ export async function recordProposalReason(input: { token: string; txHash: strin
  * After a proposal executes on chain, mirrors what the app needs: for SetVendor, the vendors row
  * (legal name from the pending metadata, person linked by Safe address). Idempotent; a no-op for
  * proposals that haven't executed. The indexer can call it too when it sees ProposalExecuted.
+ * `chain` must read the treasury of `cooperadoraId` (the demo when unset): proposal ids repeat.
  */
 export async function applyExecutedProposal(
   db: Db,
   chain: Pick<ChainReader, "proposal">,
   proposalId: bigint,
+  cooperadoraId?: number,
 ): Promise<{ applied: boolean }> {
+  const coop = scopeId(cooperadoraId);
   const onchain = await chain.proposal(proposalId);
   if (!onchain || !onchain.executed) return { applied: false };
   const decoded = decodeProposal(onchain.kind, onchain.data);
   if (decoded.kind !== "SetVendor") return { applied: false };
 
-  const rows = await db.select({ decoded: proposals.decoded }).from(proposals).where(eq(proposals.proposalId, proposalId)).limit(1);
+  const rows = await db
+    .select({ decoded: proposals.decoded })
+    .from(proposals)
+    .where(and(eq(proposals.cooperadoraId, coop), eq(proposals.proposalId, proposalId)))
+    .limit(1);
   const meta = ((rows[0]?.decoded as { meta?: PendingMeta } | null)?.meta ?? {}) as PendingMeta;
   const address = getAddress(decoded.vendor);
   const person = (
     await db.select({ id: persons.id }).from(persons).where(sql`lower(${persons.safeAddress}) = ${address.toLowerCase()}`).limit(1)
   )[0];
 
-  const byAddress = (await db.select().from(vendors).where(sql`lower(${vendors.address}) = ${address.toLowerCase()}`).limit(1))[0];
-  const byCuit = (await db.select().from(vendors).where(eq(vendors.cuit, decoded.cuit)).limit(1))[0];
+  // Each cooperative enables its own vendors: the same CUIT can be a vendor of several of them.
+  const inCoop = eq(vendors.cooperadoraId, coop);
+  const byAddress = (await db.select().from(vendors).where(and(inCoop, sql`lower(${vendors.address}) = ${address.toLowerCase()}`)).limit(1))[0];
+  const byCuit = (await db.select().from(vendors).where(and(inCoop, eq(vendors.cuit, decoded.cuit))).limit(1))[0];
   const existing = byAddress ?? byCuit;
   const legalName = meta.vendorLegalName ?? existing?.legalName ?? "Proveedor sin nombre";
 
@@ -146,7 +157,11 @@ export async function applyExecutedProposal(
       .set({ legalName, cuit: decoded.cuit, address, enabled: decoded.enabled, personId: person?.id ?? existing.personId })
       .where(eq(vendors.id, existing.id));
   } else {
-    await db.insert(vendors).values({ legalName, cuit: decoded.cuit, address, enabled: decoded.enabled, personId: person?.id ?? null });
+    await db
+      .insert(vendors)
+      .values({ cooperadoraId: coop, legalName, cuit: decoded.cuit, address, enabled: decoded.enabled, personId: person?.id ?? null });
   }
+  // A vendor paid into their own passkey Safe gets the vendor menu in this cooperative.
+  if (person && decoded.enabled) await grantRole(db, person.id, coop, VENDOR_ROLE);
   return { applied: true };
 }

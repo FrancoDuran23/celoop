@@ -5,9 +5,9 @@ import { and, eq, gt, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import type { Address, Hex } from "viem";
 import { agentTxs, budgetIndex, budgetLines, contributionIntents, contributions, cooperadora, reports } from "@/db/schema";
 import { withLock } from "@/lib/locks";
-import { activeCooperadoras, readJobCursor, rotateAfter, tickLock, writeJobCursor } from "@/lib/tenant";
+import { activeCooperadoras, readJobCursor, rotateAfter, scopedKey, tickLock, writeJobCursor } from "@/lib/tenant";
 import { explorerTxUrl, formatDate, periodLabelEs, periodRange, previousPeriod } from "@/lib/report/format";
-import { notifyOnce, type AgentDeps } from "./deps";
+import { forCooperadora, notifyOnce, type AgentDeps } from "./deps";
 import { claimNotice, releaseNotice } from "./chat-state";
 import { arDate, errorText, formatPesos } from "./format";
 import { AGENT_TX_LOCK, AGENT_TX_LOCK_MS, syncInvoices } from "./invoice";
@@ -45,16 +45,7 @@ export async function runTick(deps: AgentDeps): Promise<TickSummary | { skipped:
       perCoop.push({ id: coop.id, deferred: true });
       continue;
     }
-    const chain =
-      deps.chainFor && coop.treasuryAddress && coop.boxFactoryAddress
-        ? deps.chainFor({
-            treasury: coop.treasuryAddress as Address,
-            boxFactory: coop.boxFactoryAddress as Address,
-          })
-        : deps.chain;
-    const result = await withLock(deps.db, tickLock(coop.id), TICK_LOCK_MS, () =>
-      tickOne({ ...deps, cooperadoraId: coop.id, chain }),
-    );
+    const result = await withLock(deps.db, tickLock(coop.id), TICK_LOCK_MS, () => tickOne(forCooperadora(deps, coop)));
     if (result && typeof result === "object" && "skipped" in result) {
       perCoop.push({ id: coop.id, skipped: true });
       continue;
@@ -237,7 +228,7 @@ export async function sendReceipts(deps: AgentDeps): Promise<{ sent: number }> {
       .where(and(eq(contributions.id, c.id), isNull(contributions.receiptSentAt)))
       .returning({ id: contributions.id });
     if (!claimed) continue;
-    const link = explorerTxUrl(coop?.chainId, c.txHash) ?? urls.panel(deps.appUrl);
+    const link = explorerTxUrl(coop?.chainId, c.txHash) ?? urls.panel(deps.appUrl, deps.cooperadoraId);
     try {
       await deps.notify(
         c.personId!,
@@ -280,11 +271,11 @@ export async function closeMonth(deps: AgentDeps): Promise<{ period: string; clo
   let notified = 0;
   if (row?.status === "borrador") {
     for (const r of await personsWithRoles(db, [REVIEWER_ROLE], deps.cooperadoraId)) {
-      const sent = await notifyOnce(deps, r.id, `review:${period}`, async () => ({
+      const sent = await notifyOnce(deps, r.id, scopedKey(deps.cooperadoraId, `review:${period}`), async () => ({
         text:
           `Ya está el borrador de la rendición de ${periodLabelEs(period)}. ` +
           `Revisalo con tiempo y, si está todo bien, dale el visto bueno desde la misma página. El link vence en 7 días.`,
-        buttons: [[{ text: "Revisar rendición", url: await reviewUrl(db, deps.appUrl, r.id, period, now) }]],
+        buttons: [[{ text: "Revisar rendición", url: await reviewUrl(db, deps.appUrl, r.id, period, now, deps.cooperadoraId) }]],
       }));
       if (sent) notified++;
     }
@@ -313,8 +304,8 @@ export async function publishReviewed(deps: AgentDeps): Promise<{ published: str
       await notifyOnce(
         deps,
         p.id,
-        `published:${row.period}`,
-        `Ya está publicada la rendición de ${periodLabelEs(row.period)}, con el visto bueno del revisor. La puede ver cualquiera: ${urls.report(deps.appUrl, row.period)}`,
+        scopedKey(deps.cooperadoraId, `published:${row.period}`),
+        `Ya está publicada la rendición de ${periodLabelEs(row.period)}, con el visto bueno del revisor. La puede ver cualquiera: ${urls.report(deps.appUrl, row.period, undefined, deps.cooperadoraId)}`,
       );
     }
   }
@@ -346,7 +337,7 @@ export async function budgetAlerts(deps: AgentDeps): Promise<{ alerts: number }>
         : `Aviso: la partida ${l.name} ya usó el ${pct}% de lo asignado (gastado ${formatPesos(spent)} de ${formatPesos(allocated)}). Quedan ${formatPesos(left)}.`) +
       ` Si hace falta, se puede mover plata entre partidas con «Proponer cambio».`;
     for (const p of commission) {
-      if (await notifyOnce(deps, p.id, `budget80:${l.lineId}:${l.periodEnd}`, text)) alerts++;
+      if (await notifyOnce(deps, p.id, scopedKey(deps.cooperadoraId, `budget80:${l.lineId}:${l.periodEnd}`), text)) alerts++;
     }
   }
   return { alerts };
@@ -359,15 +350,11 @@ export async function stuckTxs(deps: AgentDeps): Promise<{ stuck: number }> {
   const rows = await db
     .select()
     .from(agentTxs)
-    .where(
-      and(
-        deps.cooperadoraId == null ? undefined : eq(agentTxs.cooperadoraId, deps.cooperadoraId),
-        eq(agentTxs.status, "sending"),
-        lt(agentTxs.updatedAt, cutoff),
-      ),
-    );
+    // The agent's key is shared by every cooperative, so a stuck send is the platform's problem:
+    // every tick looks at all of them and notifyOnce keeps it to one alert per send.
+    .where(and(eq(agentTxs.status, "sending"), lt(agentTxs.updatedAt, cutoff)));
   if (rows.length === 0) return { stuck: 0 };
-  const operators = await personsWithRoles(db, [OPERATOR_ROLE], deps.cooperadoraId);
+  const operators = await personsWithRoles(db, [OPERATOR_ROLE]);
   for (const r of rows) {
     const text =
       `Atención operador: el envío del agente "${r.key}" lleva más de 10 minutos sin confirmarse` +

@@ -1,11 +1,11 @@
 // One Telegram account, possibly several cooperatives. Roles for the menu come from the
-// membership when there is one, otherwise from persons.roles (the demo padrón).
+// membership; persons.roles only counts for the demo while it has no memberships yet.
 import { eq } from "drizzle-orm";
 import type { Db } from "@/db";
 import { cooperadora, memberships } from "@/db/schema";
 import { getSelectedCooperadora } from "@/lib/orchestrator/chat-state";
-import type { Person } from "@/lib/orchestrator/people";
-import { activeCooperadoras } from "@/lib/tenant";
+import { usesLegacyRoles, type Person } from "@/lib/orchestrator/people";
+import { cooperadoraById, DEMO_COOPERADORA_ID } from "@/lib/tenant";
 
 export type CoopChoice = { id: number; name: string; school: string; roles: string[] };
 
@@ -26,25 +26,27 @@ export async function choicesFor(db: Db, person: Person): Promise<CoopChoice[]> 
       .filter((r) => r.status === "active")
       .map((r) => ({ id: r.id, name: r.name, school: r.school, roles: r.roles }));
   }
-  const coops = await activeCooperadoras(db);
-  if (coops.length === 1) {
-    return [{ id: coops[0].id, name: coops[0].name, school: coops[0].school, roles: person.roles }];
-  }
-  return [];
+  // No memberships at all: the demo's original padrón, while the demo still runs on it.
+  const demo = await cooperadoraById(db, DEMO_COOPERADORA_ID);
+  if (!demo || demo.status !== "active" || !(await usesLegacyRoles(db, demo.id))) return [];
+  return [{ id: demo.id, name: demo.name, school: demo.school, roles: person.roles }];
 }
 
 export function withRoles(person: Person, roles: string[]): Person {
   return roles === person.roles ? person : { ...person, roles };
 }
 
-/** The cooperative this chat is acting for, or a list when the person has to pick. */
+/**
+ * The cooperative this chat is acting for, a list when the person has to pick, or `none` when they
+ * are not in any active cooperative (for example, theirs is still being set up).
+ */
 export async function resolveChatCooperadora(
   db: Db,
   person: Person,
   chatId: bigint,
-): Promise<{ person: Person; cooperadoraId: number } | { choose: CoopChoice[] }> {
+): Promise<{ person: Person; cooperadoraId: number } | { choose: CoopChoice[] } | { none: true }> {
   const choices = await choicesFor(db, person);
-  if (choices.length === 0) return { person, cooperadoraId: 1 };
+  if (choices.length === 0) return { none: true };
   if (choices.length === 1) return { person: withRoles(person, choices[0].roles), cooperadoraId: choices[0].id };
   const selected = await getSelectedCooperadora(db, chatId);
   const match = choices.find((c) => c.id === selected);

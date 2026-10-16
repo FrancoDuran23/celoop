@@ -1,10 +1,16 @@
 // Data for the signing and vendor pages. Server only. Chain reads are injected (ChainReader) so the
 // loaders can be tested with PGlite and fakes; production uses chainReader from ./server.
-import { and, desc, eq, isNotNull, sql, type AnyColumn } from "drizzle-orm";
+import { and, desc, eq, sql, type AnyColumn } from "drizzle-orm";
 import type { Address, Hex, TransactionReceipt } from "viem";
 import type { Db } from "@/db";
-import { audits, budgetIndex, budgetLines, invoices, payments, persons, proposals, vendors } from "@/db/schema";
+import { audits, budgetIndex, budgetLines, invoices, payments, proposals, vendors } from "@/db/schema";
+import { coopQuery } from "@/lib/coop-query";
+import { scopeId } from "@/lib/tenant";
+import { personsWithRoles, VENDOR_ROLE } from "@/lib/orchestrator/people";
 import { decodeProposal, describeProposal, proposalKindName, type ProposalKindName } from "./proposals";
+
+// Every loader takes the cooperative the page's link was made for (the demo when unset): line ids,
+// payment ids and proposal ids repeat across cooperatives.
 
 export type ChainReader = {
   payment(id: bigint): Promise<{ vendor: Address; amount: bigint; lineId: Hex; status: string; approvals: bigint }>;
@@ -30,8 +36,8 @@ export function invoiceLabel(inv: { tipo: number | null; ptoVta: number | null; 
   return `${kind} ${String(inv.ptoVta).padStart(5, "0")}-${String(inv.nro).padStart(8, "0")}`;
 }
 
-async function lineNames(db: Db): Promise<Map<string, string>> {
-  const rows = await db.select().from(budgetLines);
+async function lineNames(db: Db, cooperadoraId: number): Promise<Map<string, string>> {
+  const rows = await db.select().from(budgetLines).where(eq(budgetLines.cooperadoraId, cooperadoraId));
   return new Map(rows.map((r) => [r.lineId.toLowerCase(), r.name]));
 }
 
@@ -57,7 +63,14 @@ export type PaymentView = {
   audit: { verdict: "cleared" | "flagged"; observations: string[]; reportUrl: string } | null;
 };
 
-export async function loadPaymentView(db: Db, chain: ChainReader, paymentId: bigint, signer: Address | null): Promise<PaymentView | null> {
+export async function loadPaymentView(
+  db: Db,
+  chain: ChainReader,
+  paymentId: bigint,
+  signer: Address | null,
+  cooperadoraId?: number,
+): Promise<PaymentView | null> {
+  const coop = scopeId(cooperadoraId);
   const onchain = await chain.payment(paymentId);
   if (onchain.status === "none") return null;
   const [threshold, paused, budget, alreadyApproved, names, vendorRows, invoiceRows] = await Promise.all([
@@ -65,14 +78,18 @@ export async function loadPaymentView(db: Db, chain: ChainReader, paymentId: big
     chain.paused(),
     chain.budget(onchain.lineId),
     signer ? chain.hasApproved(paymentId, signer) : Promise.resolve(false),
-    lineNames(db),
-    db.select().from(vendors).where(lowerEq(vendors.address, onchain.vendor)).limit(1),
-    db.select().from(invoices).where(eq(invoices.paymentId, paymentId)).limit(1),
+    lineNames(db, coop),
+    db.select().from(vendors).where(and(eq(vendors.cooperadoraId, coop), lowerEq(vendors.address, onchain.vendor))).limit(1),
+    db.select().from(invoices).where(and(eq(invoices.cooperadoraId, coop), eq(invoices.paymentId, paymentId))).limit(1),
   ]);
   const vendor = vendorRows[0];
   const invoice = invoiceRows[0];
   const available = budget.allocated - budget.spent;
-  const [auditRow] = await db.select().from(audits).where(eq(audits.paymentId, paymentId)).limit(1);
+  const [auditRow] = await db
+    .select()
+    .from(audits)
+    .where(and(eq(audits.cooperadoraId, coop), eq(audits.paymentId, paymentId)))
+    .limit(1);
   return {
     paymentId: paymentId.toString(),
     status: onchain.status as PaymentView["status"],
@@ -93,7 +110,7 @@ export async function loadPaymentView(db: Db, chain: ChainReader, paymentId: big
       ? {
           verdict: auditRow.verdict === "flagged" ? "flagged" : "cleared",
           observations: (auditRow.findings as { level: string; text: string }[]).filter((f) => f.level === "observacion").map((f) => f.text),
-          reportUrl: `/auditoria/${paymentId}`,
+          reportUrl: `/auditoria/${paymentId}${coopQuery(coop)}`,
         }
       : null,
   };
@@ -112,15 +129,26 @@ export type ProposalView = {
 };
 
 /** The chain has the proposal itself; the database only adds its motive (proposals.reasonText). */
-export async function loadProposalView(db: Db, chain: ChainReader, proposalId: bigint, signer: Address | null): Promise<ProposalView | null> {
+export async function loadProposalView(
+  db: Db,
+  chain: ChainReader,
+  proposalId: bigint,
+  signer: Address | null,
+  cooperadoraId?: number,
+): Promise<ProposalView | null> {
+  const coop = scopeId(cooperadoraId);
   const onchain = await chain.proposal(proposalId);
   if (!onchain) return null;
   const [threshold, paused, names, vendorRows, rows, alreadyApproved] = await Promise.all([
     chain.threshold(),
     chain.paused(),
-    lineNames(db),
-    db.select({ address: vendors.address, legalName: vendors.legalName }).from(vendors),
-    db.select({ reasonText: proposals.reasonText, decoded: proposals.decoded }).from(proposals).where(eq(proposals.proposalId, proposalId)).limit(1),
+    lineNames(db, coop),
+    db.select({ address: vendors.address, legalName: vendors.legalName }).from(vendors).where(eq(vendors.cooperadoraId, coop)),
+    db
+      .select({ reasonText: proposals.reasonText, decoded: proposals.decoded })
+      .from(proposals)
+      .where(and(eq(proposals.cooperadoraId, coop), eq(proposals.proposalId, proposalId)))
+      .limit(1),
     signer ? chain.hasApprovedProposal(proposalId, signer) : Promise.resolve(false),
   ]);
   const vendorNames = new Map(vendorRows.map((v) => [v.address.toLowerCase(), v.legalName]));
@@ -147,7 +175,7 @@ export async function loadProposalView(db: Db, chain: ChainReader, proposalId: b
 
 export type LineOption = { lineId: Hex; name: string; available: string | null };
 
-export async function loadBudgetLines(db: Db): Promise<LineOption[]> {
+export async function loadBudgetLines(db: Db, cooperadoraId?: number): Promise<LineOption[]> {
   const rows = await db
     .select({ lineId: budgetLines.lineId, name: budgetLines.name, allocated: budgetIndex.allocated, spent: budgetIndex.spent })
     .from(budgetLines)
@@ -155,6 +183,7 @@ export async function loadBudgetLines(db: Db): Promise<LineOption[]> {
       budgetIndex,
       and(eq(budgetIndex.lineId, budgetLines.lineId), eq(budgetIndex.cooperadoraId, budgetLines.cooperadoraId)),
     )
+    .where(eq(budgetLines.cooperadoraId, scopeId(cooperadoraId)))
     .orderBy(budgetLines.name);
   return rows.map((r) => ({
     lineId: r.lineId as Hex,
@@ -175,15 +204,17 @@ export type ProposeContext = {
   paused: boolean;
 };
 
-export async function loadProposeContext(db: Db, chain: ChainReader): Promise<ProposeContext> {
+export async function loadProposeContext(db: Db, chain: ChainReader, cooperadoraId?: number): Promise<ProposeContext> {
+  const coop = scopeId(cooperadoraId);
   const [lines, vendorRows, peopleRows, caps, paused] = await Promise.all([
-    loadBudgetLines(db),
-    db.select().from(vendors).orderBy(vendors.legalName),
-    db
-      .select({ name: persons.name, safeAddress: persons.safeAddress })
-      .from(persons)
-      .where(and(sql`'proveedor' = any(${persons.roles})`, isNotNull(persons.safeAddress)))
-      .orderBy(persons.name),
+    loadBudgetLines(db, coop),
+    db.select().from(vendors).where(eq(vendors.cooperadoraId, coop)).orderBy(vendors.legalName),
+    personsWithRoles(db, [VENDOR_ROLE], coop).then((rows) =>
+      rows
+        .filter((p) => p.safeAddress)
+        .map((p) => ({ name: p.name, safeAddress: p.safeAddress }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    ),
     chain.caps(),
     chain.paused(),
   ]);
@@ -207,9 +238,18 @@ export type VendorView = {
   payments: VendorPayment[];
 };
 
-export async function loadVendorView(db: Db, chain: ChainReader, personId: number, safe: Address | null): Promise<VendorView | null> {
-  const byPerson = await db.select().from(vendors).where(eq(vendors.personId, personId)).limit(1);
-  const vendor = byPerson[0] ?? (safe ? (await db.select().from(vendors).where(lowerEq(vendors.address, safe)).limit(1))[0] : undefined);
+export async function loadVendorView(
+  db: Db,
+  chain: ChainReader,
+  personId: number,
+  safe: Address | null,
+  cooperadoraId?: number,
+): Promise<VendorView | null> {
+  const coop = scopeId(cooperadoraId);
+  const inCoop = eq(vendors.cooperadoraId, coop);
+  const byPerson = await db.select().from(vendors).where(and(inCoop, eq(vendors.personId, personId))).limit(1);
+  const vendor =
+    byPerson[0] ?? (safe ? (await db.select().from(vendors).where(and(inCoop, lowerEq(vendors.address, safe))).limit(1))[0] : undefined);
   if (!vendor) return null;
   const address = vendor.address as Address;
   const [balance, rows] = await Promise.all([
@@ -217,8 +257,8 @@ export async function loadVendorView(db: Db, chain: ChainReader, personId: numbe
     db
       .select({ payment: payments, invoice: invoices })
       .from(payments)
-      .leftJoin(invoices, eq(invoices.paymentId, payments.paymentId))
-      .where(lowerEq(payments.vendor, address))
+      .leftJoin(invoices, and(eq(invoices.cooperadoraId, payments.cooperadoraId), eq(invoices.paymentId, payments.paymentId)))
+      .where(and(eq(payments.cooperadoraId, coop), lowerEq(payments.vendor, address)))
       .orderBy(desc(payments.paymentId))
       .limit(50),
   ]);

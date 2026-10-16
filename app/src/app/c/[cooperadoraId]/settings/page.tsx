@@ -6,6 +6,7 @@ import { Card } from "@/components";
 import { Loading } from "@/app/firmar/_components/ui";
 import { formatPesos, shortAddress } from "@/lib/wallet/format";
 import { draftSummary, signerLinks } from "@/lib/onboarding/actions";
+import { coopQuery } from "@/lib/coop-query";
 import { LinkButton } from "../../_components/link-button";
 
 export const metadata: Metadata = { title: "Co-op settings" };
@@ -59,7 +60,7 @@ async function Settings({ params }: Props) {
           </div>
         </dl>
         <p className="mt-3 text-sm">
-          <Link href="/ledger">Live ledger</Link>
+          <Link href={`/ledger${coopQuery(id)}`}>Live ledger</Link>
         </p>
       </Card>
 

@@ -10,6 +10,7 @@ import type { InvoiceKey, ProposePaymentResult, SweepBoxResult } from "@/lib/cha
 import type { AuditStatus, PaymentStatus } from "@/lib/chain/treasury";
 import { env } from "@/lib/env";
 import type { InvoiceFile, ReadResult } from "@/lib/invoice";
+import type { CoopRow } from "@/lib/tenant";
 import { chatIdOf, claimNotice, releaseNotice } from "./chat-state";
 
 export interface ChainPort {
@@ -63,6 +64,18 @@ export interface AgentDeps {
   cooperadoraId?: number;
   /** Milliseconds a tick may spend before leaving the rest for the next minute. Default 240s. */
   tickBudgetMs?: number;
+}
+
+/**
+ * The same deps, working on one cooperative: its id for every query and, in production, a chain
+ * port aimed at its own treasury and box factory. The tick and the bot both go through here.
+ */
+export function forCooperadora<T extends AgentDeps>(deps: T, coop: Pick<CoopRow, "id" | "treasuryAddress" | "boxFactoryAddress">): T {
+  const chain =
+    deps.chainFor && coop.treasuryAddress && coop.boxFactoryAddress
+      ? deps.chainFor({ treasury: coop.treasuryAddress as Address, boxFactory: coop.boxFactoryAddress as Address })
+      : deps.chain;
+  return { ...deps, cooperadoraId: coop.id, chain };
 }
 
 /** Module 03 behind the port. Imported lazily so tests that fake the chain never load viem clients. */
@@ -158,11 +171,12 @@ export function defaultAgentDeps(args: { db: Db; notify: Notifier } & Partial<Ag
     reports: httpReports(),
     indexer: async (cooperadoraId?: number) => {
       const result = await (await import("@/lib/indexer")).runIndexer(db, { cooperadoraId });
-      const [{ syncExecutedVendors }, { chainReader }] = await Promise.all([
+      const [{ syncExecutedVendors }, { linkScope }] = await Promise.all([
         import("@/lib/wallet/vendor-sync"),
         import("@/lib/wallet/server"),
       ]);
-      const vendors = await syncExecutedVendors(db, chainReader);
+      const scope = await linkScope(db, { cooperadoraId: cooperadoraId ?? null });
+      const vendors = await syncExecutedVendors(db, scope.chain, { cooperadoraId: scope.cooperadoraId });
       return { ...result, vendorsApplied: vendors.applied };
     },
     now: () => new Date(),

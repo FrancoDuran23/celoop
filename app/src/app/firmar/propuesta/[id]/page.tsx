@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import { getDb } from "@/db";
 import { linkAllows, linkErrorMessage } from "@/lib/wallet/links";
-import { chainReader, pageChainConfig, treasuryAddress } from "@/lib/wallet/server";
+import { linkScope, pageChainConfig } from "@/lib/wallet/server";
 import { NO_PASSKEY_MESSAGE, firstParam, pageSession } from "@/lib/wallet/session";
 import { applyExecutedProposal } from "@/lib/wallet/proposal-reason";
 import { loadProposalView } from "@/lib/wallet/views";
@@ -32,15 +32,21 @@ async function load(id: string, token: string | null): Promise<Loaded> {
     if (!session.ok) return session;
     if (!linkAllows(session.link, "proposal", proposalId)) return { ok: false, message: linkErrorMessage("wrong_target") };
     if (!session.credential || !session.safe) return { ok: false, message: NO_PASSKEY_MESSAGE };
-    const [view, config] = await Promise.all([loadProposalView(db, chainReader, proposalId, session.safe), pageChainConfig()]);
+    const scope = await linkScope(db, session.link);
+    const [view, config] = await Promise.all([
+      loadProposalView(db, scope.chain, proposalId, session.safe, scope.cooperadoraId),
+      pageChainConfig(),
+    ]);
     if (!view) return { ok: false, message: "We couldn't find this proposal. The link may be old." };
     // Idempotent: makes sure an executed SetVendor is mirrored in vendors.
-    if (view.status === "executed") await applyExecutedProposal(db, chainReader, proposalId).catch(console.error);
+    if (view.status === "executed") {
+      await applyExecutedProposal(db, scope.chain, proposalId, scope.cooperadoraId).catch(console.error);
+    }
     return {
       ok: true,
       props: {
         view,
-        treasury: await treasuryAddress(),
+        treasury: scope.treasury,
         signer: { token: token!, credential: session.credential, safe: session.safe, ...config },
         name: session.link.person.name,
       },

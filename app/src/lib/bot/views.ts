@@ -6,7 +6,11 @@ import type { AgentDeps } from "@/lib/orchestrator/deps";
 import { urls } from "@/lib/orchestrator/links";
 
 async function panel(deps: AgentDeps): Promise<PanelData | null> {
-  return getPanelData(deps.db, { now: deps.now(), liveBalance: () => deps.chain.treasuryBalance() });
+  return getPanelData(deps.db, {
+    now: deps.now(),
+    cooperadoraId: deps.cooperadoraId,
+    liveBalance: () => deps.chain.treasuryBalance(),
+  });
 }
 
 const ruleText = (rule: "auto" | "signers") => (rule === "auto" ? "automático" : "con firmas");
@@ -14,7 +18,7 @@ const ruleText = (rule: "auto" | "signers") => (rule === "auto" ? "automático" 
 /** "¿En qué se gastó?" */
 export async function spendingSummary(deps: AgentDeps): Promise<string> {
   const data = await panel(deps);
-  const link = urls.panel(deps.appUrl);
+  const link = urls.panel(deps.appUrl, deps.cooperadoraId);
   if (!data) return `Todavía no hay datos de la cooperadora. El panel público está en ${link}`;
   const lines = [`Hoy la cooperadora tiene ${formatPesos(data.balance)}.`];
   if (data.expenses.length === 0) {
@@ -46,7 +50,7 @@ export async function treasuryContext(deps: AgentDeps): Promise<string> {
     `Últimos pagos: ${data.expenses.slice(0, 5).map((e) => `${formatDate(e.date)} ${e.vendor} ${formatPesos(e.amount)} (${e.lineName}, ${ruleText(e.rule)})`).join("; ") || "ninguno"}.`,
     `Pagos esperando firmas: ${data.pending.length}.`,
     `Rendiciones publicadas: ${data.publishedReports.map((r) => r.period).join(", ") || "ninguna"}.`,
-    `Panel público: ${urls.panel(deps.appUrl)}`,
+    `Panel público: ${urls.panel(deps.appUrl, deps.cooperadoraId)}`,
   ];
   return out.join("\n");
 }

@@ -3,7 +3,7 @@
 import { getDb } from "@/db";
 import { linkAllows, resolveSignLink } from "@/lib/wallet/links";
 import { applyExecutedProposal } from "@/lib/wallet/proposal-reason";
-import { chainReader } from "@/lib/wallet/server";
+import { linkScope } from "@/lib/wallet/server";
 
 export async function syncProposal(input: { token: string; proposalId: string }): Promise<{ applied: boolean }> {
   try {
@@ -11,7 +11,8 @@ export async function syncProposal(input: { token: string; proposalId: string })
     const db = getDb();
     const resolved = await resolveSignLink(db, input.token, { purposes: ["sign"], allowUsed: true });
     if (!resolved.ok || !linkAllows(resolved.link, "proposal", BigInt(input.proposalId))) return { applied: false };
-    return await applyExecutedProposal(db, chainReader, BigInt(input.proposalId));
+    const scope = await linkScope(db, resolved.link);
+    return await applyExecutedProposal(db, scope.chain, BigInt(input.proposalId), scope.cooperadoraId);
   } catch (error) {
     console.error("syncProposal failed", error);
     return { applied: false };

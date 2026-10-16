@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import { getDb } from "@/db";
 import { linkAllows, linkErrorMessage } from "@/lib/wallet/links";
-import { chainReader, pageChainConfig, treasuryAddress } from "@/lib/wallet/server";
+import { linkScope, pageChainConfig } from "@/lib/wallet/server";
 import { NO_PASSKEY_MESSAGE, firstParam, pageSession } from "@/lib/wallet/session";
 import { loadProposeContext } from "@/lib/wallet/views";
 import { Loading, Problem } from "../_components/ui";
@@ -26,12 +26,13 @@ async function load(token: string | null): Promise<Loaded> {
     if (!session.ok) return session;
     if (!linkAllows(session.link, "propose")) return { ok: false, message: linkErrorMessage("wrong_target") };
     if (!session.credential || !session.safe) return { ok: false, message: NO_PASSKEY_MESSAGE };
-    const [context, config] = await Promise.all([loadProposeContext(db, chainReader), pageChainConfig()]);
+    const scope = await linkScope(db, session.link);
+    const [context, config] = await Promise.all([loadProposeContext(db, scope.chain, scope.cooperadoraId), pageChainConfig()]);
     return {
       ok: true,
       props: {
         context,
-        treasury: await treasuryAddress(),
+        treasury: scope.treasury,
         signer: { token: token!, credential: session.credential, safe: session.safe, ...config },
         name: session.link.person.name,
       },

@@ -1,10 +1,12 @@
 // Production wiring for the wallet module: env, database, chain and Pimlico. Server only.
+import { eq } from "drizzle-orm";
 import type { Address, Hex } from "viem";
-import { getDb } from "@/db";
+import { getDb, type Db } from "@/db";
+import { signLinks } from "@/db/schema";
 import { treasuryPolicyAbi } from "@/lib/chain/abi";
 import { attributionSuffix } from "@/lib/chain/attribution";
 import { celoChain, publicClient, resolveChain } from "@/lib/chain/clients";
-import { resolveTreasury } from "@/lib/tenant";
+import { resolveTreasury, scopeId } from "@/lib/tenant";
 import { getBudget, getPayment, warsAddress, warsBalanceOf } from "@/lib/chain/treasury";
 import { env } from "@/lib/env";
 import { passkeySafeAddress, type PasskeyCredential } from "./account";
@@ -28,6 +30,19 @@ export async function treasuryAddress(db = getDb(), cooperadoraId?: number | nul
   return resolveTreasury(db);
 }
 
+/**
+ * What a signing page works on: the cooperative its link was made for (the demo for older links),
+ * that cooperative's treasury and chain reads aimed at it.
+ */
+export async function linkScope(
+  db: Db,
+  link: { cooperadoraId: number | null },
+): Promise<{ cooperadoraId: number; treasury: Address; chain: ChainReader }> {
+  const cooperadoraId = scopeId(link.cooperadoraId);
+  const treasury = await treasuryAddress(db, cooperadoraId);
+  return { cooperadoraId, treasury, chain: chainReaderFor(treasury) };
+}
+
 export async function isSignerOnChain(safe: Address, treasury?: Address): Promise<boolean> {
   return publicClient().readContract({
     address: treasury ?? (await treasuryAddress()),
@@ -37,18 +52,27 @@ export async function isSignerOnChain(safe: Address, treasury?: Address): Promis
   });
 }
 
-export async function bundlerDeps(): Promise<BundlerDeps> {
+/**
+ * The bundler's wiring for one sign link: the policy only sponsors calls to the treasury of the
+ * cooperative the link belongs to. An unknown token still gets deps; the handler rejects it.
+ */
+export async function bundlerDeps(token?: string | null): Promise<BundlerDeps> {
   const db = getDb();
   const chain = await resolveChain();
   const { PIMLICO_API_KEY, PIMLICO_SPONSORSHIP_POLICY_ID } = env();
+  const [link] =
+    token && token.length <= 128
+      ? await db.select({ cooperadoraId: signLinks.cooperadoraId }).from(signLinks).where(eq(signLinks.token, token)).limit(1)
+      : [];
+  const treasury = await treasuryAddress(db, scopeId(link?.cooperadoraId));
   return {
     db,
     chainId: chain.id,
     policy: {
-      treasury: await treasuryAddress(db),
-      wars: await warsAddress(),
+      treasury,
+      wars: await warsAddress({ db, treasury }),
       attributionSuffix: attributionSuffix(),
-      isSigner: isSignerOnChain,
+      isSigner: (safe: Address) => isSignerOnChain(safe, treasury),
       ...dbLookups(db),
     },
     // Pimlico has no local chain; with CHAIN=local operations fail with 503 (reads still work).

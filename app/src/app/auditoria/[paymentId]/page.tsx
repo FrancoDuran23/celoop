@@ -5,18 +5,13 @@ import { Suspense } from "react";
 import { getDb } from "@/db";
 import { Banner, Card, Money, TxLink } from "@/components";
 import { loadAuditView } from "@/lib/auditor/view";
+import { coopQuery, parseCoopParam } from "@/lib/coop-query";
 import { formatDate } from "@/lib/report/format";
 
 type Props = {
   params: Promise<{ paymentId: string }>;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 };
-
-function coopId(raw: string | string[] | undefined): number | undefined {
-  const value = Array.isArray(raw) ? raw[0] : raw;
-  if (!value || !/^\d{1,9}$/.test(value)) return undefined;
-  return Number(value);
-}
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { paymentId } = await params;
@@ -26,10 +21,10 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 async function Audit({ params, searchParams }: Props) {
   const { paymentId } = await params;
   if (!/^\d{1,20}$/.test(paymentId)) notFound();
-  const c = coopId((await searchParams).c);
+  const c = parseCoopParam((await searchParams).c);
   const v = await loadAuditView(getDb(), BigInt(paymentId), c);
   if (!v) notFound();
-  const jsonHref = c != null ? `/auditoria/${v.paymentId}/json?c=${c}` : `/auditoria/${v.paymentId}/json`;
+  const jsonHref = `/auditoria/${v.paymentId}/json${coopQuery(c)}`;
   return (
     <main className="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-8">
       <header>
@@ -102,7 +97,7 @@ async function Audit({ params, searchParams }: Props) {
       </Card>
 
       <p className="text-sm">
-        <Link href="/">Back to the ledger</Link>
+        <Link href={`/ledger${coopQuery(c)}`}>Back to the ledger</Link>
       </p>
     </main>
   );

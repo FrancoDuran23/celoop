@@ -3,6 +3,7 @@
 import { and, eq } from "drizzle-orm";
 import type { Db } from "@/db";
 import { budgetIndex, budgetLines, contributions, cooperadora, invoices, payments, vendors } from "@/db/schema";
+import { scopeId } from "@/lib/tenant";
 import { executedChanges } from "./changes";
 import {
   formatComprobante, formatCuit, isPeriod, periodLabel, periodRange, sumBase, invoiceTypeLabel,
@@ -29,12 +30,9 @@ export async function buildReport(db: Db, period: string, cooperadoraId?: number
   if (!isPeriod(period)) throw new Error(`Invalid period "${period}", expected YYYY-MM`);
   const { start, end } = periodRange(period);
 
-  const [coop] = await db
-    .select()
-    .from(cooperadora)
-    .where(cooperadoraId == null ? undefined : eq(cooperadora.id, cooperadoraId));
-  if (!coop) throw new Error("Cooperadora is not configured");
-  const id = cooperadoraId ?? coop.id;
+  const id = scopeId(cooperadoraId);
+  const [coop] = await db.select().from(cooperadora).where(eq(cooperadora.id, id));
+  if (!coop) throw new Error(`Cooperadora ${id} is not configured`);
 
   const lines = await db.select().from(budgetLines).where(eq(budgetLines.cooperadoraId, id));
   const index = await db.select().from(budgetIndex).where(eq(budgetIndex.cooperadoraId, id));
@@ -124,7 +122,7 @@ export async function buildReport(db: Db, period: string, cooperadoraId?: number
     })
     .sort((a, b) => a.name.localeCompare(b.name, "es"));
 
-  const budgetChanges = await executedChanges(db, { start, end });
+  const budgetChanges = await executedChanges(db, { start, end }, id);
 
   return {
     version: 1,

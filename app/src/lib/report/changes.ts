@@ -1,7 +1,9 @@
 // Executed configuration proposals, described in plain English, with signers shown by role.
 import { and, eq } from "drizzle-orm";
 import type { Db } from "@/db";
-import { approvals, budgetLines, chainEvents, persons, proposals, vendors } from "@/db/schema";
+import { approvals, budgetLines, chainEvents, proposals, vendors } from "@/db/schema";
+import { membersOf } from "@/lib/orchestrator/people";
+import { scopeId } from "@/lib/tenant";
 import { formatCuit, formatPesos } from "./format";
 import type { BudgetChangeRow } from "./types";
 
@@ -31,11 +33,16 @@ export interface Lookups {
   signerCount: number;
 }
 
-export async function loadLookups(db: Db): Promise<Lookups> {
-  const lines = await db.select().from(budgetLines);
-  const people = await db.select().from(persons);
-  const vendorRows = await db.select().from(vendors);
-  const signersEvents = await db.select().from(chainEvents).where(eq(chainEvents.eventName, "SignersSet"));
+/** Names, roles and signer counts of one cooperative (the demo when unset). */
+export async function loadLookups(db: Db, cooperadoraId?: number): Promise<Lookups> {
+  const coop = scopeId(cooperadoraId);
+  const lines = await db.select().from(budgetLines).where(eq(budgetLines.cooperadoraId, coop));
+  const people = await membersOf(db, coop);
+  const vendorRows = await db.select().from(vendors).where(eq(vendors.cooperadoraId, coop));
+  const signersEvents = await db
+    .select()
+    .from(chainEvents)
+    .where(and(eq(chainEvents.cooperadoraId, coop), eq(chainEvents.eventName, "SignersSet")));
   signersEvents.sort((a, b) => Number(a.blockNumber - b.blockNumber) || a.logIndex - b.logIndex);
   const last = signersEvents.at(-1)?.args as { signers?: unknown[]; threshold?: unknown } | undefined;
 
@@ -85,10 +92,18 @@ export function describeProposal(kind: string, decoded: unknown, l: Lookups): st
 }
 
 /** Executed proposals with their execution time, optionally limited to [from, to). */
-export async function executedChanges(db: Db, range?: { start: Date; end: Date }): Promise<BudgetChangeRow[]> {
-  const l = await loadLookups(db);
-  const rows = await db.select().from(proposals).where(eq(proposals.status, "executed"));
-  const executedEvents = await db.select().from(chainEvents).where(eq(chainEvents.eventName, "ProposalExecuted"));
+export async function executedChanges(
+  db: Db,
+  range?: { start: Date; end: Date },
+  cooperadoraId?: number,
+): Promise<BudgetChangeRow[]> {
+  const coop = scopeId(cooperadoraId);
+  const l = await loadLookups(db, coop);
+  const rows = await db.select().from(proposals).where(and(eq(proposals.cooperadoraId, coop), eq(proposals.status, "executed")));
+  const executedEvents = await db
+    .select()
+    .from(chainEvents)
+    .where(and(eq(chainEvents.cooperadoraId, coop), eq(chainEvents.eventName, "ProposalExecuted")));
   const timeById = new Map<string, Date>();
   for (const e of executedEvents) {
     const id = (e.args as { proposalId?: unknown }).proposalId;
@@ -101,7 +116,7 @@ export async function executedChanges(db: Db, range?: { start: Date; end: Date }
     const signed = await db
       .select()
       .from(approvals)
-      .where(and(eq(approvals.target, "proposal"), eq(approvals.targetId, p.proposalId)));
+      .where(and(eq(approvals.cooperadoraId, coop), eq(approvals.target, "proposal"), eq(approvals.targetId, p.proposalId)));
     const signers = [...new Set(signed.map((a) => l.roleOf(a.signer)))].sort();
     out.push({
       id: p.proposalId,

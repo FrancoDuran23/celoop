@@ -1,6 +1,7 @@
 // Report lifecycle: borrador → revisada → publicada.
 import { and, eq } from "drizzle-orm";
 import type { Db } from "@/db";
+import { scopeId } from "@/lib/tenant";
 import { reports, signLinks } from "@/db/schema";
 import { buildReport } from "./build";
 import { renderReportPdf } from "./pdf";
@@ -14,7 +15,7 @@ export async function getReportRow(db: Db, period: string, cooperadoraId?: numbe
   const [row] = await db
     .select()
     .from(reports)
-    .where(and(eq(reports.period, period), cooperadoraId == null ? undefined : eq(reports.cooperadoraId, cooperadoraId)));
+    .where(and(eq(reports.period, period), eq(reports.cooperadoraId, scopeId(cooperadoraId))));
   return row ?? null;
 }
 
@@ -25,7 +26,7 @@ export async function closeReport(db: Db, period: string, cooperadoraId?: number
   if (!existing) {
     const [row] = await db
       .insert(reports)
-      .values({ period, status: "borrador", data, ...(cooperadoraId == null ? {} : { cooperadoraId }) })
+      .values({ period, status: "borrador", data, cooperadoraId: scopeId(cooperadoraId) })
       .returning();
     return { row, created: true };
   }
@@ -33,7 +34,7 @@ export async function closeReport(db: Db, period: string, cooperadoraId?: number
   const [row] = await db
     .update(reports)
     .set({ data })
-    .where(and(eq(reports.period, period), cooperadoraId == null ? undefined : eq(reports.cooperadoraId, cooperadoraId)))
+    .where(eq(reports.id, existing.id))
     .returning();
   return { row, created: false };
 }
@@ -43,10 +44,11 @@ export type ReviewResult =
   | { ok: false; error: "not_found" | "bad_state" | "bad_token"; token?: TokenCheck };
 
 /** The reviewer confirms with their link: borrador → revisada. */
+/** The cooperative is the one the reviewer's link was made for (or `cooperadoraId`, which must match). */
 export async function reviewReport(db: Db, period: string, token: string | null | undefined, now = new Date(), cooperadoraId?: number): Promise<ReviewResult> {
-  const row = await getReportRow(db, period, cooperadoraId);
+  const check = await checkReviewToken(db, token, period, now, cooperadoraId);
+  const row = await getReportRow(db, period, check.ok ? check.cooperadoraId : cooperadoraId);
   if (!row) return { ok: false, error: "not_found" };
-  const check = await checkReviewToken(db, token, period, now);
   if (!check.ok) return { ok: false, error: "bad_token", token: check };
   if (check.used || row.status !== "borrador") return { ok: false, error: "bad_state" };
   const [updated] = await db
@@ -66,7 +68,7 @@ export async function publishReport(
   if (!row) return { ok: false, error: "not_found" };
   if (row.status !== "revisada") return { ok: false, error: "bad_state" };
   const bytes = await renderReportPdf(row.data as ReportData);
-  const pdfUrl = await store(period, bytes);
+  const pdfUrl = await store(period, bytes, row.cooperadoraId);
   const [updated] = await db
     .update(reports)
     .set({ status: "publicada", pdfUrl, publishedAt: now })
@@ -78,5 +80,5 @@ export async function publishReport(
 /** A published report is public; anything earlier needs the reviewer's token. */
 export async function canView(db: Db, row: ReportRow, token: string | null | undefined, now = new Date()): Promise<boolean> {
   if (row.status === "publicada") return true;
-  return (await checkReviewToken(db, token, row.period, now)).ok;
+  return (await checkReviewToken(db, token, row.period, now, row.cooperadoraId)).ok;
 }

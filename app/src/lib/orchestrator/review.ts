@@ -9,8 +9,9 @@ import { cooperadora, invoices, vendors } from "@/db/schema";
 import { invoiceIdOf, validateInvoice, type InvoiceFields } from "@/lib/invoice";
 import type { AgentDeps } from "./deps";
 import { arDate } from "./format";
+import { scopeId } from "@/lib/tenant";
 import { askForLine, describe, type InvoiceRow } from "./invoice";
-import { personById, type Person } from "./people";
+import { personInCooperadora, type Person } from "./people";
 import { canReviewInvoices, hasFiscalData, reviewCard } from "./review-card";
 
 export { canReviewInvoices } from "./review-card";
@@ -26,7 +27,13 @@ export async function listForReview(deps: AgentDeps, person: Person): Promise<nu
   const rows = await deps.db
     .select()
     .from(invoices)
-    .where(and(eq(invoices.status, "revision"), ne(invoices.uploaderPersonId, person.id)))
+    .where(
+      and(
+        eq(invoices.cooperadoraId, scopeId(deps.cooperadoraId)),
+        eq(invoices.status, "revision"),
+        ne(invoices.uploaderPersonId, person.id),
+      ),
+    )
     .orderBy(invoices.id)
     .limit(10);
   if (rows.length === 0) {
@@ -70,8 +77,13 @@ export async function resolveReview(
   args: { personId: number; invoiceRowId: number; decision: "seguir" | "rechazar" },
 ): Promise<ReviewOutcome> {
   const { db } = deps;
-  const person = await personById(db, args.personId);
-  const [inv] = await db.select().from(invoices).where(eq(invoices.id, args.invoiceRowId));
+  const coopId = scopeId(deps.cooperadoraId);
+  const [inv] = await db
+    .select()
+    .from(invoices)
+    .where(and(eq(invoices.id, args.invoiceRowId), eq(invoices.cooperadoraId, coopId)));
+  // Roles count in the invoice's own cooperative only.
+  const person = await personInCooperadora(db, args.personId, coopId);
   if (!person) return { status: inv?.status ?? "desconocida", error: "unknown_person" };
   if (!inv || !canReviewInvoices(person) || inv.uploaderPersonId === person.id) {
     await deps.notify(person.id, "Esa factura no la podés resolver vos: la tiene que revisar otra persona.");
@@ -109,9 +121,12 @@ export async function resolveReview(
     return { status: "revision", error: "no_fiscal_data" };
   }
   const f = fieldsOf(inv);
-  const [coop] = await db.select().from(cooperadora);
-  if (!coop) throw new Error("cooperadora is not configured");
-  const enabled = await db.select().from(vendors).where(eq(vendors.enabled, true));
+  const [coop] = await db.select().from(cooperadora).where(eq(cooperadora.id, inv.cooperadoraId));
+  if (!coop) throw new Error(`cooperadora ${inv.cooperadoraId} is not configured`);
+  const enabled = await db
+    .select()
+    .from(vendors)
+    .where(and(eq(vendors.cooperadoraId, inv.cooperadoraId), eq(vendors.enabled, true)));
   const invoiceId = invoiceIdOf(f);
   const validation = await validateInvoice(f, {
     cooperadoraCuit: coop.cuit,
@@ -120,7 +135,7 @@ export async function resolveReview(
       const [other] = await db
         .select({ id: invoices.id })
         .from(invoices)
-        .where(and(eq(invoices.invoiceId, invoiceId), ne(invoices.id, inv.id)));
+        .where(and(eq(invoices.cooperadoraId, inv.cooperadoraId), eq(invoices.invoiceId, invoiceId), ne(invoices.id, inv.id)));
       return !!other || (await deps.chain.isInvoicePaid(invoiceId as Hex));
     },
     today: arDate(deps.now()),

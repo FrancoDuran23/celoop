@@ -1,11 +1,12 @@
 // The card a reviewer sees for an invoice in `revision`: reason, file and the data read.
-import { and, arrayOverlaps, eq, ne } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Db } from "@/db";
 import { invoices, persons, vendors } from "@/db/schema";
 import type { InlineButton } from "@/lib/bot/notify";
 import { formatCuit, formatDate } from "@/lib/report/format";
 import type { AgentDeps } from "./deps";
 import { formatPesos, invoiceLabel } from "./format";
+import { personsWithRoles } from "./people";
 
 type InvoiceRow = typeof invoices.$inferSelect;
 
@@ -25,7 +26,10 @@ export async function reviewCard(db: Db, inv: InvoiceRow): Promise<{ text: strin
     `Motivo: ${inv.statusReason ?? "sin motivo registrado"}.`,
   ];
   if (hasFiscalData(inv)) {
-    const [v] = await db.select({ name: vendors.legalName }).from(vendors).where(eq(vendors.cuit, inv.cuit!));
+    const [v] = await db
+      .select({ name: vendors.legalName })
+      .from(vendors)
+      .where(and(eq(vendors.cooperadoraId, inv.cooperadoraId), eq(vendors.cuit, inv.cuit!)));
     lines.push(
       "",
       "Datos leídos:",
@@ -47,13 +51,9 @@ export async function reviewCard(db: Db, inv: InvoiceRow): Promise<{ text: strin
   return { text: lines.join("\n"), buttons };
 }
 
-/** Sends the card to every revisor and presidente except the uploader. */
+/** Sends the card to every revisor and presidente of the invoice's cooperative, except the uploader. */
 export async function sendReviewCards(deps: Pick<AgentDeps, "db" | "notify">, inv: InvoiceRow): Promise<void> {
   const card = await reviewCard(deps.db, inv);
-  const reviewers = await deps.db
-    .select({ id: persons.id })
-    .from(persons)
-    .where(and(arrayOverlaps(persons.roles, [...INVOICE_REVIEW_ROLES]), ne(persons.id, inv.uploaderPersonId)))
-    .orderBy(persons.id);
-  for (const r of reviewers) await deps.notify(r.id, card.text, card.buttons);
+  const reviewers = await personsWithRoles(deps.db, INVOICE_REVIEW_ROLES, inv.cooperadoraId);
+  for (const r of reviewers) if (r.id !== inv.uploaderPersonId) await deps.notify(r.id, card.text, card.buttons);
 }

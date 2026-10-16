@@ -3,23 +3,32 @@
 import { and, eq, gt } from "drizzle-orm";
 import type { Db } from "@/db";
 import { proposals } from "@/db/schema";
+import { scopeId } from "@/lib/tenant";
 import { applyExecutedProposal } from "./proposal-reason";
 import type { ChainReader } from "./views";
 
-/** Applies SetVendor proposals executed in the last `withinMs` (idempotent). */
+/** Applies one cooperative's SetVendor proposals executed in the last `withinMs` (idempotent). */
 export async function syncExecutedVendors(
   db: Db,
   chain: Pick<ChainReader, "proposal">,
-  opts: { now?: Date; withinMs?: number } = {},
+  opts: { now?: Date; withinMs?: number; cooperadoraId?: number } = {},
 ): Promise<{ applied: number }> {
+  const coop = scopeId(opts.cooperadoraId);
   const since = new Date((opts.now ?? new Date()).getTime() - (opts.withinMs ?? 24 * 60 * 60 * 1000));
   const rows = await db
     .select({ proposalId: proposals.proposalId })
     .from(proposals)
-    .where(and(eq(proposals.kind, "SetVendor"), eq(proposals.status, "executed"), gt(proposals.updatedAt, since)));
+    .where(
+      and(
+        eq(proposals.cooperadoraId, coop),
+        eq(proposals.kind, "SetVendor"),
+        eq(proposals.status, "executed"),
+        gt(proposals.updatedAt, since),
+      ),
+    );
   let applied = 0;
   for (const row of rows) {
-    if ((await applyExecutedProposal(db, chain, row.proposalId)).applied) applied++;
+    if ((await applyExecutedProposal(db, chain, row.proposalId, coop)).applied) applied++;
   }
   return { applied };
 }

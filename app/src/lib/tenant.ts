@@ -4,9 +4,17 @@ import { and, asc, eq, isNotNull, sql } from "drizzle-orm";
 import type { Address } from "viem";
 import type { Db } from "@/db";
 import { cooperadora, jobCursor } from "@/db/schema";
+import { DEMO_COOPERADORA_ID } from "@/lib/coop-query";
 import { env } from "@/lib/env";
 
 export type CoopRow = typeof cooperadora.$inferSelect;
+
+export { coopQuery, DEMO_COOPERADORA_ID, parseCoopParam } from "@/lib/coop-query";
+
+/** The cooperative a piece of work is scoped to: the one given, else the demo. Never "all of them". */
+export function scopeId(cooperadoraId?: number | null): number {
+  return cooperadoraId ?? DEMO_COOPERADORA_ID;
+}
 
 export function tickLock(cooperadoraId: number): string {
   return `tick:${cooperadoraId}`;

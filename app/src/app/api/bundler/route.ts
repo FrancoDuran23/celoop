@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
 
   let deps;
   try {
-    deps = await bundlerDeps();
+    deps = await bundlerDeps(request.nextUrl.searchParams.get("t"));
   } catch (error) {
     console.error("bundler not configured", error);
     return rpcError(503, "Bundler not configured");
