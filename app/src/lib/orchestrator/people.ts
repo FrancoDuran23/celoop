@@ -1,7 +1,7 @@
 // Who is who. Roles live in persons.roles; signers are the comisión plus the revisor.
-import { arrayOverlaps, eq } from "drizzle-orm";
+import { and, arrayOverlaps, eq, inArray } from "drizzle-orm";
 import type { Db } from "@/db";
-import { persons } from "@/db/schema";
+import { memberships, persons } from "@/db/schema";
 
 export type Person = typeof persons.$inferSelect;
 
@@ -28,11 +28,22 @@ export async function personById(db: Db, id: number): Promise<Person | undefined
   return p;
 }
 
-export async function personsWithRoles(db: Db, roles: readonly string[]): Promise<Person[]> {
+export async function personsWithRoles(db: Db, roles: readonly string[], cooperadoraId?: number): Promise<Person[]> {
+  if (cooperadoraId != null) {
+    const members = await db
+      .select({ personId: memberships.personId, roles: memberships.roles })
+      .from(memberships)
+      .where(eq(memberships.cooperadoraId, cooperadoraId));
+    if (members.length > 0) {
+      const ids = members.filter((m) => m.roles.some((r) => roles.includes(r))).map((m) => m.personId);
+      if (ids.length === 0) return [];
+      return db.select().from(persons).where(inArray(persons.id, ids)).orderBy(persons.id);
+    }
+  }
   return db
     .select()
     .from(persons)
-    .where(arrayOverlaps(persons.roles, [...roles]))
+    .where(and(arrayOverlaps(persons.roles, [...roles])))
     .orderBy(persons.id);
 }
 

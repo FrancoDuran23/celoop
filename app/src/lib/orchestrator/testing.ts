@@ -214,7 +214,10 @@ export class FakeIndexer {
           executedAt: status === "executed" ? new Date("2026-10-20T15:00:00Z") : null,
           ...extra,
         })
-        .onConflictDoUpdate({ target: payments.paymentId, set: { status, ...extra } });
+        .onConflictDoUpdate({
+          target: [payments.cooperadoraId, payments.paymentId],
+          set: { status, ...extra },
+        });
     });
   }
 }

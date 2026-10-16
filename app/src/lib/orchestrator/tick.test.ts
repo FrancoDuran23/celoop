@@ -5,7 +5,8 @@ import { withLock } from "@/lib/locks";
 import { createContributionIntent, ripioOnrampUrl } from "./contribute";
 import { pesos } from "./format";
 import { buttonUrls, LINE_MATERIALES, testAgent } from "./testing";
-import { runTick, TICK_LOCK } from "./tick";
+import { tickLock } from "@/lib/tenant";
+import { runTick, TICK_BUDGET_MS } from "./tick";
 
 describe("contributions", () => {
   test("intent → deposit → sweep → one receipt", async () => {
@@ -209,10 +210,33 @@ describe("tick", () => {
 
   test("two ticks never run at once", async () => {
     const t = await testAgent();
-    await withLock(t.db, TICK_LOCK, 60_000, async () => {
+    await withLock(t.db, tickLock(1), 60_000, async () => {
       expect(await runTick(t.deps)).toEqual({ skipped: true });
     });
     expect(t.indexer.runs).toBe(0);
+  });
+
+  test("a short budget defers the next cooperative and the following tick takes it", async () => {
+    const t = await testAgent();
+    await t.db.insert(cooperadora).values({
+      name: "Otra cooperadora",
+      school: "Escuela 2",
+      cuit: BigInt(30700000002),
+      chainId: 42220,
+      treasuryAddress: "0x00000000000000000000000000000000000000d1",
+      boxFactoryAddress: "0x00000000000000000000000000000000000000d2",
+      status: "active",
+    });
+    const first = await runTick({ ...t.deps, tickBudgetMs: -1 });
+    expect(first).toMatchObject({
+      ok: true,
+      steps: { cooperadoras: [expect.objectContaining({ id: 1 }), expect.objectContaining({ id: 2, deferred: true })] },
+    });
+    const second = await runTick({ ...t.deps, tickBudgetMs: TICK_BUDGET_MS });
+    expect(second).toMatchObject({
+      ok: true,
+      steps: { cooperadoras: [expect.objectContaining({ id: 2 }), expect.objectContaining({ id: 1 })] },
+    });
   });
 
   test("a failing step doesn't stop the others", async () => {

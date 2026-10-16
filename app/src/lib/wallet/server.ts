@@ -3,7 +3,8 @@ import type { Address, Hex } from "viem";
 import { getDb } from "@/db";
 import { treasuryPolicyAbi } from "@/lib/chain/abi";
 import { attributionSuffix } from "@/lib/chain/attribution";
-import { addressFromEnv, celoChain, publicClient, resolveChain } from "@/lib/chain/clients";
+import { celoChain, publicClient, resolveChain } from "@/lib/chain/clients";
+import { resolveTreasury } from "@/lib/tenant";
 import { getBudget, getPayment, warsAddress, warsBalanceOf } from "@/lib/chain/treasury";
 import { env } from "@/lib/env";
 import { passkeySafeAddress, type PasskeyCredential } from "./account";
@@ -21,13 +22,15 @@ function nodeUrl(): string {
   return env().RPC_URL ?? celoChain().rpcUrls.default.http[0];
 }
 
-export function treasuryAddress(): Address {
-  return addressFromEnv("TREASURY_ADDRESS");
+/** The treasury a page should talk to: an explicit cooperative, else env, else the only active row. */
+export async function treasuryAddress(db = getDb(), cooperadoraId?: number | null): Promise<Address> {
+  if (cooperadoraId != null) return resolveTreasury(db, null, cooperadoraId);
+  return resolveTreasury(db);
 }
 
-export async function isSignerOnChain(safe: Address): Promise<boolean> {
+export async function isSignerOnChain(safe: Address, treasury?: Address): Promise<boolean> {
   return publicClient().readContract({
-    address: treasuryAddress(),
+    address: treasury ?? (await treasuryAddress()),
     abi: treasuryPolicyAbi,
     functionName: "isSigner",
     args: [safe],
@@ -42,7 +45,7 @@ export async function bundlerDeps(): Promise<BundlerDeps> {
     db,
     chainId: chain.id,
     policy: {
-      treasury: treasuryAddress(),
+      treasury: await treasuryAddress(db),
       wars: await warsAddress(),
       attributionSuffix: attributionSuffix(),
       isSigner: isSignerOnChain,
@@ -66,61 +69,98 @@ export async function pageChainConfig(): Promise<{ chainId: number; rpId: string
   return { chainId: chain.id, rpId: env().RP_ID, attributionSuffix: attributionSuffix() };
 }
 
+/** Chain reads aimed at one treasury. Defaults to env or the only active cooperative. */
+export function chainReaderFor(treasury: Address): ChainReader {
+  const scope = { treasury };
+  return {
+    async payment(id) {
+      const p = await getPayment(id, scope);
+      return { vendor: p.vendor, amount: p.amount, lineId: p.lineId, status: p.status, approvals: p.approvals };
+    },
+    async budget(lineId) {
+      const b = await getBudget(lineId, scope);
+      return { allocated: b.allocated, spent: b.spent, exists: b.exists };
+    },
+    async threshold() {
+      return publicClient().readContract({ address: treasury, abi: treasuryPolicyAbi, functionName: "threshold" });
+    },
+    async paused() {
+      return publicClient().readContract({ address: treasury, abi: treasuryPolicyAbi, functionName: "paused" });
+    },
+    async hasApproved(id, signer) {
+      return publicClient().readContract({
+        address: treasury,
+        abi: treasuryPolicyAbi,
+        functionName: "hasApproved",
+        args: [id, signer],
+      });
+    },
+    async proposal(id) {
+      if (id < BigInt(1)) return null;
+      try {
+        const [kind, data, proposer, executed, approvals] = await publicClient().readContract({
+          address: treasury,
+          abi: treasuryPolicyAbi,
+          functionName: "proposal",
+          args: [id],
+        });
+        if (/^0x0{40}$/i.test(proposer)) return null;
+        return { kind, data, proposer, executed, approvals };
+      } catch {
+        return null;
+      }
+    },
+    async hasApprovedProposal(id, signer) {
+      return publicClient().readContract({
+        address: treasury,
+        abi: treasuryPolicyAbi,
+        functionName: "hasApprovedProposal",
+        args: [id, signer],
+      });
+    },
+    async caps() {
+      const t = { address: treasury, abi: treasuryPolicyAbi } as const;
+      const [perTxCap, vendorMonthlyCap] = await Promise.all([
+        publicClient().readContract({ ...t, functionName: "perTxCap" }),
+        publicClient().readContract({ ...t, functionName: "vendorMonthlyCap" }),
+      ]);
+      return { perTxCap, vendorMonthlyCap };
+    },
+    warsBalanceOf: (address) => warsBalanceOf(address, scope),
+    async receipt(txHash) {
+      return publicClient().getTransactionReceipt({ hash: txHash });
+    },
+  };
+}
+
 export const chainReader: ChainReader = {
   async payment(id) {
-    const p = await getPayment(id);
-    return { vendor: p.vendor, amount: p.amount, lineId: p.lineId, status: p.status, approvals: p.approvals };
+    return chainReaderFor(await treasuryAddress()).payment(id);
   },
   async budget(lineId) {
-    const b = await getBudget(lineId);
-    return { allocated: b.allocated, spent: b.spent, exists: b.exists };
+    return chainReaderFor(await treasuryAddress()).budget(lineId);
   },
   async threshold() {
-    return publicClient().readContract({ address: treasuryAddress(), abi: treasuryPolicyAbi, functionName: "threshold" });
+    return chainReaderFor(await treasuryAddress()).threshold();
   },
   async paused() {
-    return publicClient().readContract({ address: treasuryAddress(), abi: treasuryPolicyAbi, functionName: "paused" });
+    return chainReaderFor(await treasuryAddress()).paused();
   },
   async hasApproved(id, signer) {
-    return publicClient().readContract({
-      address: treasuryAddress(),
-      abi: treasuryPolicyAbi,
-      functionName: "hasApproved",
-      args: [id, signer],
-    });
+    return chainReaderFor(await treasuryAddress()).hasApproved(id, signer);
   },
   async proposal(id) {
-    if (id < BigInt(1)) return null;
-    try {
-      const [kind, data, proposer, executed, approvals] = await publicClient().readContract({
-        address: treasuryAddress(),
-        abi: treasuryPolicyAbi,
-        functionName: "proposal",
-        args: [id],
-      });
-      if (/^0x0{40}$/i.test(proposer)) return null;
-      return { kind, data, proposer, executed, approvals };
-    } catch {
-      return null; // UnknownProposal
-    }
+    return chainReaderFor(await treasuryAddress()).proposal(id);
   },
   async hasApprovedProposal(id, signer) {
-    return publicClient().readContract({
-      address: treasuryAddress(),
-      abi: treasuryPolicyAbi,
-      functionName: "hasApprovedProposal",
-      args: [id, signer],
-    });
+    return chainReaderFor(await treasuryAddress()).hasApprovedProposal(id, signer);
   },
   async caps() {
-    const t = { address: treasuryAddress(), abi: treasuryPolicyAbi } as const;
-    const [perTxCap, vendorMonthlyCap] = await Promise.all([
-      publicClient().readContract({ ...t, functionName: "perTxCap" }),
-      publicClient().readContract({ ...t, functionName: "vendorMonthlyCap" }),
-    ]);
-    return { perTxCap, vendorMonthlyCap };
+    return chainReaderFor(await treasuryAddress()).caps();
   },
-  warsBalanceOf,
+  async warsBalanceOf(address) {
+    return warsBalanceOf(address, { treasury: await treasuryAddress() });
+  },
   async receipt(txHash) {
     return publicClient().getTransactionReceipt({ hash: txHash });
   },

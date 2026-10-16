@@ -34,8 +34,8 @@ export type PublishResult = { ok: true; pdfUrl: string | null } | { ok: false; e
 
 /** Module 05's internal endpoints, called with TICK_SECRET. */
 export interface ReportsPort {
-  close(period: string): Promise<CloseResult>;
-  publish(period: string): Promise<PublishResult>;
+  close(period: string, cooperadoraId?: number): Promise<CloseResult>;
+  publish(period: string, cooperadoraId?: number): Promise<PublishResult>;
 }
 
 /** Stores a file and returns its URL. */
@@ -48,8 +48,10 @@ export interface AgentDeps {
   readInvoice: (file: InvoiceFile) => Promise<ReadResult>;
   storeFile: FileStore;
   reports: ReportsPort;
-  /** Copies new chain events into Postgres (runIndexer). */
-  indexer: () => Promise<unknown>;
+  /** Copies new chain events into Postgres (runIndexer). The tick passes the cooperative id. */
+  indexer: (cooperadoraId?: number) => Promise<unknown>;
+  /** Production tick swaps in a chain port aimed at one treasury. Tests leave this unset. */
+  chainFor?: (scope: { treasury: Address; boxFactory: Address }) => ChainPort;
   /**
    * Asks the auditor to review pending payments now, so a small one doesn't wait for the next cron
    * round. The auditor runs with its own deps and key; without this the cron still gets to it.
@@ -57,42 +59,47 @@ export interface AgentDeps {
   auditNow?: () => Promise<unknown>;
   now: () => Date;
   appUrl: string;
+  /** Set by the tick and the bot while they work on one cooperative. */
+  cooperadoraId?: number;
+  /** Milliseconds a tick may spend before leaving the rest for the next minute. Default 240s. */
+  tickBudgetMs?: number;
 }
 
 /** Module 03 behind the port. Imported lazily so tests that fake the chain never load viem clients. */
-export function chainPort(): ChainPort {
+export function chainPort(scope: { db?: Db; treasury?: Address; boxFactory?: Address } = {}): ChainPort {
+  const at = (db?: Db) => ({ db: db ?? scope.db, treasury: scope.treasury, boxFactory: scope.boxFactory });
   return {
     async proposePayment(args, db) {
       const { proposePayment } = await import("@/lib/chain/agent");
-      return proposePayment(args, { db });
+      return proposePayment(args, { ...at(db) });
     },
     async sweepBox(args, db) {
       const { sweepBox } = await import("@/lib/chain/agent");
-      return sweepBox(args, { db });
+      return sweepBox(args, { ...at(db) });
     },
     async isInvoicePaid(invoiceId) {
       const { isInvoicePaid } = await import("@/lib/chain/treasury");
-      return isInvoicePaid(invoiceId);
+      return isInvoicePaid(invoiceId, at());
     },
     async boxAddress(ref) {
       const { boxAddress } = await import("@/lib/chain/treasury");
-      return boxAddress(ref);
+      return boxAddress(ref, at());
     },
     async balanceOf(address) {
       const { warsBalanceOf } = await import("@/lib/chain/treasury");
-      return warsBalanceOf(address);
+      return warsBalanceOf(address, at());
     },
     async treasuryBalance() {
       try {
         const { getTreasuryState } = await import("@/lib/chain/treasury");
-        return (await getTreasuryState()).balance;
+        return (await getTreasuryState(at())).balance;
       } catch {
         return null;
       }
     },
     async paymentState(paymentId) {
       const { getPayment, getPaymentAudit } = await import("@/lib/chain/treasury");
-      const [p, a] = await Promise.all([getPayment(paymentId), getPaymentAudit(paymentId)]);
+      const [p, a] = await Promise.all([getPayment(paymentId, at()), getPaymentAudit(paymentId, at())]);
       return { status: p.status, audit: a.status };
     },
   };
@@ -111,13 +118,13 @@ export function httpReports(appUrl = env().APP_URL, secret = env().TICK_SECRET):
     return { res, json };
   };
   return {
-    async close(period) {
-      const { res, json } = await call("/api/reports/close", { period });
+    async close(period, cooperadoraId) {
+      const { res, json } = await call("/api/reports/close", { period, cooperadoraId });
       if (!res.ok) throw new Error(`reports/close ${period}: HTTP ${res.status} ${JSON.stringify(json)}`);
       return { status: String(json.status), created: json.created === true };
     },
-    async publish(period) {
-      const { res, json } = await call(`/api/reports/${period}/publish`, {});
+    async publish(period, cooperadoraId) {
+      const { res, json } = await call(`/api/reports/${period}/publish`, { cooperadoraId });
       if (res.ok) return { ok: true, pdfUrl: typeof json.pdfUrl === "string" ? json.pdfUrl : null };
       return { ok: false, error: typeof json.error === "string" ? json.error : `HTTP ${res.status}` };
     },
@@ -145,12 +152,12 @@ export const storeFile: FileStore = async (name, bytes, contentType) => {
 export function defaultAgentDeps(args: { db: Db; notify: Notifier } & Partial<AgentDeps>): AgentDeps {
   const { db } = args;
   return {
-    chain: chainPort(),
+    chain: chainPort({ db }),
     readInvoice: async (file) => (await import("@/lib/invoice")).readInvoice(file),
     storeFile,
     reports: httpReports(),
-    indexer: async () => {
-      const result = await (await import("@/lib/indexer")).runIndexer(db);
+    indexer: async (cooperadoraId?: number) => {
+      const result = await (await import("@/lib/indexer")).runIndexer(db, { cooperadoraId });
       const [{ syncExecutedVendors }, { chainReader }] = await Promise.all([
         import("@/lib/wallet/vendor-sync"),
         import("@/lib/wallet/server"),

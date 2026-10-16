@@ -1,0 +1,10 @@
+name = "minga-cron"
+main = "src/index.js"
+compatibility_date = "2026-10-16"
+
+# Once a minute, under the 300s limit of the Next.js routes.
+[triggers]
+crons = ["* * * * *"]
+
+[vars]
+APP_URL = "https://celoop-rouge.vercel.app"

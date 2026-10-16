@@ -4,7 +4,7 @@ import { getDb } from "@/db";
 import { defaultAuditorDeps, type AuditorDeps } from "@/lib/auditor/deps";
 import { telegramNotifier } from "@/lib/bot/notify";
 import { env, required } from "@/lib/env";
-import { defaultAgentDeps, type AgentDeps } from "./deps";
+import { chainPort, defaultAgentDeps, type AgentDeps } from "./deps";
 
 let api: Api | undefined;
 
@@ -20,7 +20,7 @@ export function productionAuditorDeps(): AuditorDeps {
 
 export function productionDeps(): AgentDeps {
   const db = getDb();
-  return defaultAgentDeps({
+  const deps = defaultAgentDeps({
     db,
     notify: telegramNotifier(db, telegramApi()),
     // The treasurer only asks the auditor to hurry; the auditor decides with its own deps and key.
@@ -28,4 +28,8 @@ export function productionDeps(): AgentDeps {
       ? async () => (await import("@/lib/auditor")).runAuditor(productionAuditorDeps())
       : undefined,
   });
+  return {
+    ...deps,
+    chainFor: (scope) => chainPort({ db, ...scope }),
+  };
 }

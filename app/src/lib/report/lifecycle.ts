@@ -1,5 +1,5 @@
 // Report lifecycle: borrador → revisada → publicada.
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Db } from "@/db";
 import { reports, signLinks } from "@/db/schema";
 import { buildReport } from "./build";
@@ -10,21 +10,31 @@ import type { ReportData } from "./types";
 
 export type ReportRow = typeof reports.$inferSelect;
 
-export async function getReportRow(db: Db, period: string): Promise<ReportRow | null> {
-  const [row] = await db.select().from(reports).where(eq(reports.period, period));
+export async function getReportRow(db: Db, period: string, cooperadoraId?: number): Promise<ReportRow | null> {
+  const [row] = await db
+    .select()
+    .from(reports)
+    .where(and(eq(reports.period, period), cooperadoraId == null ? undefined : eq(reports.cooperadoraId, cooperadoraId)));
   return row ?? null;
 }
 
 /** Creates the draft for a closed month; recomputes it if it is still a draft. */
-export async function closeReport(db: Db, period: string): Promise<{ row: ReportRow; created: boolean }> {
-  const existing = await getReportRow(db, period);
-  const data = await buildReport(db, period);
+export async function closeReport(db: Db, period: string, cooperadoraId?: number): Promise<{ row: ReportRow; created: boolean }> {
+  const existing = await getReportRow(db, period, cooperadoraId);
+  const data = await buildReport(db, period, cooperadoraId);
   if (!existing) {
-    const [row] = await db.insert(reports).values({ period, status: "borrador", data }).returning();
+    const [row] = await db
+      .insert(reports)
+      .values({ period, status: "borrador", data, ...(cooperadoraId == null ? {} : { cooperadoraId }) })
+      .returning();
     return { row, created: true };
   }
   if (existing.status !== "borrador") return { row: existing, created: false };
-  const [row] = await db.update(reports).set({ data }).where(eq(reports.period, period)).returning();
+  const [row] = await db
+    .update(reports)
+    .set({ data })
+    .where(and(eq(reports.period, period), cooperadoraId == null ? undefined : eq(reports.cooperadoraId, cooperadoraId)))
+    .returning();
   return { row, created: false };
 }
 
@@ -33,8 +43,8 @@ export type ReviewResult =
   | { ok: false; error: "not_found" | "bad_state" | "bad_token"; token?: TokenCheck };
 
 /** The reviewer confirms with their link: borrador → revisada. */
-export async function reviewReport(db: Db, period: string, token: string | null | undefined, now = new Date()): Promise<ReviewResult> {
-  const row = await getReportRow(db, period);
+export async function reviewReport(db: Db, period: string, token: string | null | undefined, now = new Date(), cooperadoraId?: number): Promise<ReviewResult> {
+  const row = await getReportRow(db, period, cooperadoraId);
   if (!row) return { ok: false, error: "not_found" };
   const check = await checkReviewToken(db, token, period, now);
   if (!check.ok) return { ok: false, error: "bad_token", token: check };
@@ -42,7 +52,7 @@ export async function reviewReport(db: Db, period: string, token: string | null 
   const [updated] = await db
     .update(reports)
     .set({ status: "revisada", reviewedByPersonId: check.personId, reviewedAt: now })
-    .where(eq(reports.period, period))
+    .where(and(eq(reports.id, row.id)))
     .returning();
   await db.update(signLinks).set({ usedAt: now }).where(eq(signLinks.token, token!));
   return { ok: true, row: updated };
@@ -50,9 +60,9 @@ export async function reviewReport(db: Db, period: string, token: string | null 
 
 /** revisada → publicada: renders the PDF and stores it. */
 export async function publishReport(
-  db: Db, period: string, store: PdfStorage, now = new Date(),
+  db: Db, period: string, store: PdfStorage, now = new Date(), cooperadoraId?: number,
 ): Promise<{ ok: true; row: ReportRow } | { ok: false; error: "not_found" | "bad_state" }> {
-  const row = await getReportRow(db, period);
+  const row = await getReportRow(db, period, cooperadoraId);
   if (!row) return { ok: false, error: "not_found" };
   if (row.status !== "revisada") return { ok: false, error: "bad_state" };
   const bytes = await renderReportPdf(row.data as ReportData);
@@ -60,7 +70,7 @@ export async function publishReport(
   const [updated] = await db
     .update(reports)
     .set({ status: "publicada", pdfUrl, publishedAt: now })
-    .where(eq(reports.period, period))
+    .where(eq(reports.id, row.id))
     .returning();
   return { ok: true, row: updated };
 }

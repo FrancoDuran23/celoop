@@ -1,6 +1,6 @@
 // buildReport: the monthly rendición, computed from the indexed tables. Deterministic: the
 // same database always yields the same object (no "now", stable ordering).
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Db } from "@/db";
 import { budgetIndex, budgetLines, contributions, cooperadora, invoices, payments, vendors } from "@/db/schema";
 import { executedChanges } from "./changes";
@@ -25,21 +25,25 @@ function conceptOf(c: { kind: string; personId: number | null }): IncomeConcept 
   return c.personId === null ? "sin_identificar" : "aportes_socios";
 }
 
-export async function buildReport(db: Db, period: string): Promise<ReportData> {
+export async function buildReport(db: Db, period: string, cooperadoraId?: number): Promise<ReportData> {
   if (!isPeriod(period)) throw new Error(`Invalid period "${period}", expected YYYY-MM`);
   const { start, end } = periodRange(period);
 
-  const [coop] = await db.select().from(cooperadora);
+  const [coop] = await db
+    .select()
+    .from(cooperadora)
+    .where(cooperadoraId == null ? undefined : eq(cooperadora.id, cooperadoraId));
   if (!coop) throw new Error("Cooperadora is not configured");
+  const id = cooperadoraId ?? coop.id;
 
-  const lines = await db.select().from(budgetLines);
-  const index = await db.select().from(budgetIndex);
+  const lines = await db.select().from(budgetLines).where(eq(budgetLines.cooperadoraId, id));
+  const index = await db.select().from(budgetIndex).where(eq(budgetIndex.cooperadoraId, id));
   const indexById = new Map(index.map((i) => [i.lineId.toLowerCase(), i]));
   const lineById = new Map(lines.map((l) => [l.lineId.toLowerCase(), l]));
 
   // Balance: money only (dinero in, executed payments out). Especie and trabajo never move it.
-  const allContributions = await db.select().from(contributions);
-  const allPayments = await db.select().from(payments).where(eq(payments.status, "executed"));
+  const allContributions = await db.select().from(contributions).where(eq(contributions.cooperadoraId, id));
+  const allPayments = await db.select().from(payments).where(and(eq(payments.status, "executed"), eq(payments.cooperadoraId, id)));
   const isMoney = (c: { kind: string }) => c.kind === "dinero";
   const before = (d: Date | null) => d !== null && d < start;
   const opening =
@@ -70,8 +74,8 @@ export async function buildReport(db: Db, period: string): Promise<ReportData> {
   const periodPayments = allPayments
     .filter((p) => p.executedAt && p.executedAt >= start && p.executedAt < end)
     .sort((a, b) => a.executedAt!.getTime() - b.executedAt!.getTime() || Number(a.paymentId - b.paymentId));
-  const invoiceRows = await db.select().from(invoices);
-  const vendorRows = await db.select().from(vendors);
+  const invoiceRows = await db.select().from(invoices).where(eq(invoices.cooperadoraId, id));
+  const vendorRows = await db.select().from(vendors).where(eq(vendors.cooperadoraId, id));
   const vendorByAddr = new Map(vendorRows.map((v) => [v.address.toLowerCase(), v]));
   const expenseRows: ExpenseRow[] = periodPayments.map((p) => {
     const inv =

@@ -5,7 +5,8 @@ import { eq, sql } from "drizzle-orm";
 import { decodeEventLog, encodeFunctionData, isAddressEqual, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import type { Db } from "@/db";
-import { budgetLines, cooperadora, persons, vendors } from "@/db/schema";
+import { budgetLines, cooperadora, memberships, persons, vendors } from "@/db/schema";
+import { syncCooperadoraSequence } from "@/lib/tenant";
 import { treasuryPolicyAbi } from "@/lib/chain/abi";
 import { ANVIL_AUDITOR_KEY, ANVIL_KEYS } from "@/lib/chain/anvil";
 import { attributionSuffix } from "@/lib/chain/attribution";
@@ -153,22 +154,36 @@ async function seed(db: Db, plan: Plan, chainId: number, d: Deployment) {
     configHash: plan.configHash,
   };
   // createdAt stays "now": the tick skips closing months that ended before the cooperadora existed.
-  await db.insert(cooperadora).values({ id: 1, ...coop }).onConflictDoUpdate({ target: cooperadora.id, set: coop });
+  await db.insert(cooperadora).values({ id: 1, status: "active", ...coop }).onConflictDoUpdate({ target: cooperadora.id, set: { ...coop, status: "active" } });
+  await syncCooperadoraSequence(db);
 
   for (const p of c.people) {
     const row = { name: p.name, roles: p.roles, kind: p.kind ?? null, safeAddress: p.safeAddress ?? null };
     await db.insert(persons).values({ phone: p.phone, ...row }).onConflictDoUpdate({ target: persons.phone, set: row });
+    const [person] = await db.select({ id: persons.id }).from(persons).where(eq(persons.phone, p.phone));
+    if (person) {
+      await db
+        .insert(memberships)
+        .values({ personId: person.id, cooperadoraId: 1, roles: p.roles })
+        .onConflictDoUpdate({ target: [memberships.personId, memberships.cooperadoraId], set: { roles: p.roles } });
+    }
   }
   for (const v of c.vendors) {
     const [person] = v.phone ? await db.select({ id: persons.id }).from(persons).where(eq(persons.phone, v.phone)) : [];
     const row = { legalName: v.legalName, address: v.address, personId: person?.id ?? null, enabled: true };
-    await db.insert(vendors).values({ cuit: v.cuit, ...row }).onConflictDoUpdate({ target: vendors.cuit, set: row });
+    await db
+      .insert(vendors)
+      .values({ cuit: v.cuit, cooperadoraId: 1, ...row })
+      .onConflictDoUpdate({ target: [vendors.cooperadoraId, vendors.cuit], set: row });
   }
   for (const l of plan.lines) {
     await db
       .insert(budgetLines)
-      .values({ lineId: l.lineId, slug: l.slug, name: l.name })
-      .onConflictDoUpdate({ target: budgetLines.lineId, set: { slug: l.slug, name: l.name } });
+      .values({ cooperadoraId: 1, lineId: l.lineId, slug: l.slug, name: l.name })
+      .onConflictDoUpdate({
+        target: [budgetLines.cooperadoraId, budgetLines.lineId],
+        set: { slug: l.slug, name: l.name },
+      });
   }
   const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(persons);
   return n;
@@ -265,8 +280,7 @@ export async function runSetup(opts: SetupOptions): Promise<SetupResult> {
   const out: Record<string, string> = {
     CHAIN: s.chain,
     RPC_URL: s.rpcUrl,
-    TREASURY_ADDRESS: deployment.treasury,
-    BOX_FACTORY_ADDRESS: deployment.boxFactory,
+    FACTORY_ADDRESS: deployment.factory,
     WARS_ADDRESS: deployment.token,
     DEPLOY_BLOCK: deployBlock.toString(),
     AGENT_SEND: s.chain === "local" ? "on" : "off",

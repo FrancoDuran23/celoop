@@ -32,13 +32,14 @@ export type ResolvedLink = {
   expiresAt: Date;
   usedAt: Date | null;
   person: { id: number; name: string; roles: string[]; safeAddress: Address | null };
+  cooperadoraId: number | null;
 };
 
 export type LinkResult = { ok: true; link: ResolvedLink } | { ok: false; error: LinkError };
 
 export async function createSignLink(
   db: Db,
-  args: { personId: number; purpose: LinkPurpose; target?: LinkTarget; ttlMs?: number; now?: Date },
+  args: { personId: number; purpose: LinkPurpose; target?: LinkTarget; ttlMs?: number; now?: Date; cooperadoraId?: number },
 ): Promise<string> {
   const token = randomBytes(24).toString("base64url");
   const now = args.now ?? new Date();
@@ -47,6 +48,7 @@ export async function createSignLink(
     personId: args.personId,
     purpose: args.purpose,
     target: args.target ?? null,
+    cooperadoraId: args.cooperadoraId,
     expiresAt: new Date(now.getTime() + (args.ttlMs ?? SIGN_LINK_TTL_MS)),
   });
   return token;
@@ -89,6 +91,7 @@ export async function resolveSignLink(
         roles: row.person.roles,
         safeAddress: (row.person.safeAddress as Address | null) ?? null,
       },
+      cooperadoraId: row.link.cooperadoraId,
     },
   };
 }

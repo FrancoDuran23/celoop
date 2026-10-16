@@ -1,0 +1,91 @@
+// CooperadoraFactory ABI. Hand-written to match contracts/src/CooperadoraFactory.sol.
+export const cooperadoraFactoryAbi = [
+  {
+    type: "constructor",
+    inputs: [
+      { name: "token_", type: "address" },
+      { name: "agent_", type: "address" },
+      { name: "auditor_", type: "address" },
+    ],
+    stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
+    name: "create",
+    inputs: [
+      { name: "signers", type: "address[]" },
+      { name: "threshold", type: "uint256" },
+      { name: "perTxCap", type: "uint256" },
+      { name: "vendorMonthlyCap", type: "uint256" },
+      { name: "configHash", type: "bytes32" },
+    ],
+    outputs: [
+      { name: "id", type: "uint256" },
+      { name: "treasury", type: "address" },
+      { name: "boxFactory", type: "address" },
+    ],
+    stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
+    name: "cooperadora",
+    inputs: [{ name: "id", type: "uint256" }],
+    outputs: [
+      { name: "treasury", type: "address" },
+      { name: "boxFactory", type: "address" },
+      { name: "creator", type: "address" },
+      { name: "configHash", type: "bytes32" },
+      { name: "createdAt", type: "uint64" },
+    ],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "count",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "idOf",
+    inputs: [{ name: "treasury", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "token",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "agent",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "auditor",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+    stateMutability: "view",
+  },
+  {
+    type: "event",
+    name: "CooperadoraCreated",
+    inputs: [
+      { name: "id", type: "uint256", indexed: true },
+      { name: "treasury", type: "address", indexed: true },
+      { name: "boxFactory", type: "address", indexed: true },
+      { name: "creator", type: "address", indexed: false },
+      { name: "configHash", type: "bytes32", indexed: false },
+    ],
+  },
+  { type: "error", name: "InvalidToken", inputs: [] },
+  { type: "error", name: "InvalidAgent", inputs: [] },
+  { type: "error", name: "UnknownCooperadora", inputs: [{ name: "id", type: "uint256" }] },
+] as const;

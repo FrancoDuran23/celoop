@@ -34,7 +34,15 @@ export async function sendTagged(key: Hex, to: Address, data: Hex): Promise<Tran
   return receipt;
 }
 
-export type Deployment = { chainId: number; token: Address; treasury: Address; boxFactory: Address; mockToken: boolean };
+export type Deployment = {
+  chainId: number;
+  token: Address;
+  factory: Address;
+  onchainId?: number;
+  treasury: Address;
+  boxFactory: Address;
+  mockToken: boolean;
+};
 
 /** Runs `forge script script/Deploy.s.sol --broadcast` and parses the JSON line it prints. */
 export async function forgeDeploy(args: {
@@ -71,6 +79,6 @@ export async function forgeDeploy(args: {
     .find((l) => l.startsWith("{") && l.includes('"treasury"'));
   if (!line) throw new Error(`forge script no imprimió el resultado del deploy:\n${stdout}`);
   const d = JSON.parse(line) as Deployment;
-  args.log?.(`Contratos desplegados: tesoro ${d.treasury}, buzones ${d.boxFactory}, wARS ${d.token}${d.mockToken ? " (MockWARS)" : ""}`);
+  args.log?.(`Contratos desplegados: factory ${d.factory}, tesoro ${d.treasury}, buzones ${d.boxFactory}, wARS ${d.token}${d.mockToken ? " (MockWARS)" : ""}`);
   return d;
 }

@@ -31,7 +31,7 @@ async function load(token: string | null): Promise<Loaded> {
       ok: true,
       props: {
         context,
-        treasury: treasuryAddress(),
+        treasury: await treasuryAddress(),
         signer: { token: token!, credential: session.credential, safe: session.safe, ...config },
         name: session.link.person.name,
       },

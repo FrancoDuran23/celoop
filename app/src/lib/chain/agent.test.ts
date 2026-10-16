@@ -5,7 +5,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import type { Db } from "@/db";
 import { agentTxs } from "@/db/schema";
-import { createTestDb } from "@/db/testing";
+import { createTestDb, ensureCooperadora } from "@/db/testing";
 import { resetEnv } from "@/lib/env";
 import { parseTransaction } from "viem/celo";
 import { AgentTxPendingError, sendAgentTx, signAgentTx, STALE_SENDING_MS } from "./agent";
@@ -52,6 +52,7 @@ describe.skipIf(!hasAnvil)("sendAgentTx (anvil)", () => {
       FEE_CURRENCY: "",
     });
     db = await createTestDb();
+    await ensureCooperadora(db);
     await anvilRpc(anvil.url, "evm_setAutomine", [true]);
     await anvilRpc(anvil.url, "anvil_setCode", [TARGET, OK_CODE]);
   });

@@ -446,7 +446,7 @@ async function announceAutoPaid(deps: AgentDeps, inv: InvoiceRow, txHash: string
     `Listo, pagué la ${what}, de la partida ${line?.name ?? "elegida"}. ${rule}\nVer movimiento: ${link}`,
   );
   const uploader = await personById(deps.db, inv.uploaderPersonId);
-  const extra = audited && inv.paymentId !== null ? `\nInforme del auditor: ${urls.audit(deps.appUrl, inv.paymentId)}` : "";
+  const extra = audited && inv.paymentId !== null ? `\nInforme del auditor: ${urls.audit(deps.appUrl, inv.paymentId, deps.cooperadoraId)}` : "";
   await notifyReviewers(
     deps,
     `Pago automático${audited ? " (revisado por el auditor)" : ""}: ${what}, partida ${line?.name ?? "-"}. La cargó ${uploader?.name ?? "la comisión"}.\nVer movimiento: ${link}${extra}`,
@@ -505,7 +505,7 @@ export async function advanceAudited(deps: AgentDeps, inv: InvoiceRow, state: Au
     const row = await transition(deps, inv.id, ["auditando"], { status: "pendiente", statusReason: "observada por el auditor" });
     if (row && inv.paymentId !== null) {
       const observations = await auditObservations(deps, inv.paymentId);
-      const report = urls.audit(deps.appUrl, inv.paymentId);
+      const report = urls.audit(deps.appUrl, inv.paymentId, deps.cooperadoraId);
       await toSignatures(deps, row, {
         note: `El auditor la observó y no la dejó salir automática:\n${observations}\nInforme: ${report}`,
         uploaderText:

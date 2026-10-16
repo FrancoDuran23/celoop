@@ -1,7 +1,7 @@
 import { encodeAbiParameters, encodeEventTopics, type Hex, type TransactionReceipt } from "viem";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Db } from "@/db";
-import { createTestDb } from "@/db/testing";
+import { createTestDb, ensureCooperadora } from "@/db/testing";
 import { budgetLines, proposals, vendors } from "@/db/schema";
 import { treasuryPolicyAbi } from "@/lib/chain/abi";
 import { applyExecutedProposal, recordProposal, recordProposalReason } from "./proposal-reason";
@@ -24,6 +24,7 @@ function receiptWith(proposer: `0x${string}`, data: Hex, kind = 1): TransactionR
 let db: Db;
 beforeEach(async () => {
   db = await createTestDb();
+  await ensureCooperadora(db);
 }, 60_000);
 
 describe("recordProposalReason", () => {
@@ -72,7 +73,7 @@ describe("new budget lines and vendors", () => {
     const chain = { receipt: async () => receiptWith(SIGNER_SAFE, data, 0) };
     const r = await recordProposal({ token, txHash: TX, newLine: { slug: "biblioteca", name: "Biblioteca" } }, { db, chain, treasury: TREASURY });
     expect(r.ok).toBe(true);
-    expect(await db.select().from(budgetLines)).toEqual([{ lineId, slug: "biblioteca", name: "Biblioteca" }]);
+    expect(await db.select().from(budgetLines)).toEqual([{ cooperadoraId: 1, lineId, slug: "biblioteca", name: "Biblioteca" }]);
     const wrong = await recordProposal({ token, txHash: TX, newLine: { slug: "otra", name: "Otra" } }, { db, chain, treasury: TREASURY });
     expect(wrong.ok).toBe(false);
   });

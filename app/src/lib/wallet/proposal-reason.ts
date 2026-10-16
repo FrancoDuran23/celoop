@@ -53,6 +53,7 @@ export async function recordProposal(input: unknown, deps: Deps): Promise<Reason
   const kind = proposalKindName(event.args.kind);
   const decoded = decodeProposal(kind, event.args.data);
   const meta: PendingMeta = {};
+  const cooperadoraId = link.cooperadoraId ?? 1;
   let motive: string | null = null;
 
   if (decoded.kind === "MoveBudget") {
@@ -68,7 +69,7 @@ export async function recordProposal(input: unknown, deps: Deps): Promise<Reason
     meta.newLine = newLine;
     await deps.db
       .insert(budgetLines)
-      .values({ lineId: decoded.lineId, slug: newLine.slug, name: newLine.name })
+      .values({ cooperadoraId, lineId: decoded.lineId, slug: newLine.slug, name: newLine.name })
       .onConflictDoNothing();
   }
   if (vendorLegalName) {
@@ -82,6 +83,7 @@ export async function recordProposal(input: unknown, deps: Deps): Promise<Reason
   await deps.db
     .insert(proposals)
     .values({
+      cooperadoraId,
       proposalId: event.args.proposalId,
       kind,
       data: event.args.data,
@@ -92,7 +94,7 @@ export async function recordProposal(input: unknown, deps: Deps): Promise<Reason
       createdTxHash: txHash,
     })
     .onConflictDoUpdate({
-      target: proposals.proposalId,
+      target: [proposals.cooperadoraId, proposals.proposalId],
       set: {
         reasonText: sql`coalesce(${motive}, ${proposals.reasonText})`,
         decoded: sql`coalesce(${proposals.decoded}, '{}'::jsonb) || jsonb_build_object('meta', ${metaJson}::jsonb)`,

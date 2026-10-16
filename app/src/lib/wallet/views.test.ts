@@ -1,7 +1,7 @@
 import { keccak256, stringToBytes, type Address, type Hex } from "viem";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Db } from "@/db";
-import { createTestDb } from "@/db/testing";
+import { createTestDb, ensureCooperadora } from "@/db/testing";
 import { budgetLines, invoices, proposals } from "@/db/schema";
 import { encodeSetVendor } from "./proposals";
 import { loadPaymentView, loadProposalView, type ChainReader } from "./views";
@@ -31,6 +31,7 @@ function reader(over: Partial<ChainReader> = {}): ChainReader {
 let db: Db;
 beforeEach(async () => {
   db = await createTestDb();
+  await ensureCooperadora(db);
 }, 60_000);
 
 describe("loadPaymentView", () => {

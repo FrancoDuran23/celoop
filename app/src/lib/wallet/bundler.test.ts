@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Db } from "@/db";
-import { createTestDb } from "@/db/testing";
+import { createTestDb, ensureCooperadora } from "@/db/testing";
 import { dbLookups, handleBundlerRpc, type BundlerDeps, type JsonRpcRequest } from "./bundler";
 import { ENTRY_POINT } from "./constants";
 import { resolveSignLink } from "./links";
@@ -27,6 +27,7 @@ let deps: BundlerDeps;
 
 beforeEach(async () => {
   db = await createTestDb();
+  await ensureCooperadora(db);
   sent = [];
   deps = {
     db,

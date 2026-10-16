@@ -6,6 +6,7 @@ import {Test} from "forge-std/Test.sol";
 import {Deploy} from "../script/Deploy.s.sol";
 import {TreasuryPolicy} from "../src/TreasuryPolicy.sol";
 import {BoxFactory} from "../src/BoxFactory.sol";
+import {CooperadoraFactory} from "../src/CooperadoraFactory.sol";
 import {MockWARS} from "../src/test/MockWARS.sol";
 
 contract DeployTest is Test {
@@ -57,6 +58,13 @@ contract DeployTest is Test {
         assertEq(t.configHash(), keccak256("acta"));
         assertEq(BoxFactory(d.boxFactory).treasury(), d.treasury);
         assertEq(BoxFactory(d.boxFactory).token(), d.token);
+        CooperadoraFactory created = CooperadoraFactory(d.factory);
+        assertEq(created.token(), d.token);
+        assertEq(created.agent(), agent);
+        assertEq(created.auditor(), auditor);
+        assertEq(created.count(), 1);
+        assertEq(d.onchainId, 1);
+        assertEq(created.idOf(d.treasury), 1);
     }
 
     function test_Local_DeploysMockAndDecodesArgsDespiteTheSuffix() public {

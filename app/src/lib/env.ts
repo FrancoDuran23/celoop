@@ -13,6 +13,12 @@ const schema = z.object({
   AUDITOR_PRIVATE_KEY: hex.optional(),
   /** "on" lets the agent and the auditor send transactions; anything else is a dry run. */
   AGENT_SEND: z.string().default("off"),
+  /** CooperadoraFactory. Every cooperative's treasury is created from here and stored on its row. */
+  FACTORY_ADDRESS: address.optional(),
+  /**
+   * Optional fallback for a single treasury when the database row is not used (older deploys and
+   * chain tests). New setups leave this empty and read the address from `cooperadora`.
+   */
   TREASURY_ADDRESS: address.optional(),
   BOX_FACTORY_ADDRESS: address.optional(),
   WARS_ADDRESS: address.optional(),

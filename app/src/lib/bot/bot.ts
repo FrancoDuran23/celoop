@@ -1,11 +1,12 @@
 // The Telegram bot (grammY, webhook mode). Identifies people by the phone they share, shows a
 // menu by role and hands real work to the orchestrator. Messages to known people go through
-// deps.notify; only the "share your contact" prompt (before we know who it is) uses ctx.reply.
+// live().notify; only the "share your contact" prompt (before we know who it is) uses ctx.reply.
+import { AsyncLocalStorage } from "node:async_hooks";
 import { eq, inArray } from "drizzle-orm";
-import { Bot, Keyboard, type Context } from "grammy";
+import { Bot, InlineKeyboard, Keyboard, type Context } from "grammy";
 import type { UserFromGetMe } from "grammy/types";
 import { persons, reports } from "@/db/schema";
-import { getFlow, setFlow } from "@/lib/orchestrator/chat-state";
+import { getFlow, setFlow, setSelectedCooperadora } from "@/lib/orchestrator/chat-state";
 import { createContributionIntent, SUGGESTED_AMOUNTS } from "@/lib/orchestrator/contribute";
 import type { AgentDeps } from "@/lib/orchestrator/deps";
 import { formatPesos, parseAmount, pesos } from "@/lib/orchestrator/format";
@@ -24,6 +25,7 @@ import type { Assistant } from "./assistant";
 import { MENU, matchMenu, menuActions, menuKeyboard, type MenuAction } from "./menu";
 import type { InlineButton } from "./notify";
 import { phoneCandidates } from "./phone";
+import { resolveChatCooperadora, type CoopChoice } from "./tenant";
 import { myContributions, pendingPayments, spendingSummary, treasuryContext } from "./views";
 
 export type BotDeps = AgentDeps & {
@@ -49,8 +51,15 @@ export function createBot(opts: { token: string; botInfo?: UserFromGetMe; deps: 
   const bot = new Bot(opts.token, opts.botInfo ? { botInfo: opts.botInfo } : undefined);
   const deps = opts.deps;
   const { db } = deps;
+  const coopAls = new AsyncLocalStorage<number>();
+  const live = (): BotDeps => {
+    const id = coopAls.getStore();
+    return id == null ? deps : { ...deps, cooperadoraId: id };
+  };
+  const chooser = (choices: CoopChoice[]) =>
+    new InlineKeyboard(choices.map((c) => [{ text: `${c.name} · ${c.school}`, callback_data: `coop:${c.id}` }]));
   const download =
-    deps.downloadFile ??
+    live().downloadFile ??
     (async (fileId: string) => {
       const file = await bot.api.getFile(fileId);
       if (!file.file_path) throw new Error("Telegram returned no file_path");
@@ -69,10 +78,14 @@ export function createBot(opts: { token: string; botInfo?: UserFromGetMe; deps: 
       await db.update(persons).set({ telegramChatId: BigInt(ctx.chat.id) }).where(eq(persons.id, p.id));
       p.telegramChatId = BigInt(ctx.chat.id);
     }
+    if (p && ctx.chat && coopAls.getStore() != null) {
+      const bound = await resolveChatCooperadora(db, p, BigInt(ctx.chat.id));
+      if ("person" in bound) return bound.person;
+    }
     return p;
   }
 
-  const sendMenu = (p: Person, text: string) => deps.notify(p.id, text, menuKeyboard(p));
+  const sendMenu = (p: Person, text: string) => live().notify(p.id, text, menuKeyboard(p));
 
   function welcome(p: Person): string {
     const lines = [`¡Hola, ${firstName(p)}! Ya sé quién sos.`];
@@ -94,12 +107,22 @@ export function createBot(opts: { token: string; botInfo?: UserFromGetMe; deps: 
   bot.use(async (ctx, next) => {
     if (ctx.chat && ctx.chat.type !== "private") return;
     try {
+      const picking = ctx.callbackQuery?.data?.startsWith("coop:");
+      const person = picking ? undefined : await findPerson(ctx);
+      if (person && ctx.chat) {
+        const bound = await resolveChatCooperadora(db, person, BigInt(ctx.chat.id));
+        if ("choose" in bound) {
+          await ctx.reply("Pertenecés a más de una cooperadora. ¿Con cuál seguimos?", { reply_markup: chooser(bound.choose) });
+          return;
+        }
+        return await coopAls.run(bound.cooperadoraId, () => next());
+      }
       await next();
     } catch (e) {
       console.error(`bot: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);
       try {
         const p = await findPerson(ctx);
-        if (p) await deps.notify(p.id, TEXT.sorry);
+        if (p) await live().notify(p.id, TEXT.sorry);
         else await ctx.reply(TEXT.sorry);
       } catch {
         // nothing else to do
@@ -125,19 +148,40 @@ export function createBot(opts: { token: string; botInfo?: UserFromGetMe; deps: 
       .set({ telegramUserId: userId, telegramChatId: BigInt(ctx.chat.id) })
       .where(eq(persons.id, p.id))
       .returning();
-    await sendMenu(linked, welcome(linked));
-    if (isSigner(linked) && !linked.safeAddress) {
-      const url = await enrollUrl(db, deps.appUrl, linked.id, deps.now());
-      await deps.notify(
-        linked.id,
+    const bound = await resolveChatCooperadora(db, linked, BigInt(ctx.chat.id));
+    if ("choose" in bound) {
+      await ctx.reply("Pertenecés a más de una cooperadora. ¿Con cuál seguimos?", {
+        reply_markup: chooser(bound.choose),
+      });
+      return;
+    }
+    await coopAls.run(bound.cooperadoraId, async () => {
+    await sendMenu(bound.person, welcome(bound.person));
+    if (isSigner(bound.person) && !bound.person.safeAddress) {
+      const url = await enrollUrl(db, live().appUrl, linked.id, live().now());
+      await live().notify(
+        bound.person.id,
         "Como sos firmante, necesitás crear tu firma con la huella o la cara del teléfono. Es un minuto. Abrí el link en Chrome o Safari (no dentro de Telegram).",
         [[{ text: "Crear mi firma", url }]],
       );
     }
+    });
   });
 
   bot.on("callback_query:data", async (ctx) => {
     const data = ctx.callbackQuery.data;
+    const pick = /^coop:(\d+)$/.exec(data);
+    if (pick && ctx.chat) {
+      await setSelectedCooperadora(db, BigInt(ctx.chat.id), Number(pick[1]));
+      const person = await findPerson(ctx);
+      await ctx.answerCallbackQuery();
+      if (!person) return void (await askContact(ctx));
+      const bound = await resolveChatCooperadora(db, person, BigInt(ctx.chat.id));
+      if ("choose" in bound) {
+        return void (await ctx.reply("Esa cooperadora no está en tu lista.", { reply_markup: chooser(bound.choose) }));
+      }
+      return coopAls.run(bound.cooperadoraId, () => sendMenu(bound.person, welcome(bound.person)));
+    }
     const p = await findPerson(ctx);
     if (!p) {
       await ctx.answerCallbackQuery();
@@ -151,18 +195,18 @@ export function createBot(opts: { token: string; botInfo?: UserFromGetMe; deps: 
     if (data === "amt:otro") {
       await ctx.answerCallbackQuery();
       if (ctx.chat) await setFlow(db, BigInt(ctx.chat.id), { kind: "amount" });
-      return deps.notify(p.id, "¿Cuánto querés aportar? Escribí el monto en pesos, por ejemplo 4500.");
+      return live().notify(p.id, "¿Cuánto querés aportar? Escribí el monto en pesos, por ejemplo 4500.");
     }
     const rev = /^rev:(ok|no):(\d+)$/.exec(data);
     if (rev) {
       await ctx.answerCallbackQuery();
-      await resolveReview(deps, { personId: p.id, invoiceRowId: Number(rev[2]), decision: rev[1] === "ok" ? "seguir" : "rechazar" });
+      await resolveReview(live(), { personId: p.id, invoiceRowId: Number(rev[2]), decision: rev[1] === "ok" ? "seguir" : "rechazar" });
       return;
     }
     const line = /^line:(\d+):([a-z0-9-]+)$/.exec(data);
     if (line) {
       await ctx.answerCallbackQuery({ text: "Listo, preparo el pago." });
-      await chooseLine(deps, { personId: p.id, invoiceRowId: Number(line[1]), slug: line[2] });
+      await chooseLine(live(), { personId: p.id, invoiceRowId: Number(line[1]), slug: line[2] });
       return;
     }
     await ctx.answerCallbackQuery();
@@ -172,7 +216,7 @@ export function createBot(opts: { token: string; botInfo?: UserFromGetMe; deps: 
     const p = await findPerson(ctx);
     if (!p) return void (await askContact(ctx));
     if (!canManageInvoices(p)) {
-      return deps.notify(p.id, "Las facturas las carga la comisión. Si tenés una, pasásela a alguien de la comisión.");
+      return live().notify(p.id, "Las facturas las carga la comisión. Si tenés una, pasásela a alguien de la comisión.");
     }
     const msg = ctx.message;
     let fileId: string;
@@ -190,14 +234,14 @@ export function createBot(opts: { token: string; botInfo?: UserFromGetMe; deps: 
       size = doc.file_size;
     }
     if (!INVOICE_MIME.has(mimeType)) {
-      return deps.notify(p.id, "Mandame la factura en PDF o como foto (JPG o PNG).");
+      return live().notify(p.id, "Mandame la factura en PDF o como foto (JPG o PNG).");
     }
     if (size !== undefined && size > MAX_FILE_BYTES) {
-      return deps.notify(p.id, "El archivo es muy pesado (más de 20 MB). Mandá el PDF original o una foto más liviana.");
+      return live().notify(p.id, "El archivo es muy pesado (más de 20 MB). Mandá el PDF original o una foto más liviana.");
     }
-    await deps.notify(p.id, "Recibí la factura. La estoy leyendo, dame unos segundos.");
+    await live().notify(p.id, "Recibí la factura. La estoy leyendo, dame unos segundos.");
     const bytes = await download(fileId);
-    await processInvoice(deps, { uploaderPersonId: p.id, file: { bytes, mimeType } });
+    await processInvoice(live(), { uploaderPersonId: p.id, file: { bytes, mimeType } });
   });
 
   bot.on("message:text", async (ctx) => {
@@ -222,18 +266,18 @@ export function createBot(opts: { token: string; botInfo?: UserFromGetMe; deps: 
       }
       const value = parseAmount(text);
       if (value === null) {
-        return deps.notify(p.id, "No entendí el monto. Escribilo en números, por ejemplo 4500, o «cancelar».");
+        return live().notify(p.id, "No entendí el monto. Escribilo en números, por ejemplo 4500, o «cancelar».");
       }
       await setFlow(db, chatId, null);
       return startContribution(p, value);
     }
-    const reply = await deps.assistant({
+    const reply = await live().assistant({
       text,
-      context: await treasuryContext(deps),
+      context: await treasuryContext(live()),
       personName: p.name,
       menu: menuActions(p).map((a) => MENU[a]),
     });
-    await deps.notify(p.id, reply);
+    await live().notify(p.id, reply);
   });
 
   bot.on("message", async (ctx) => {
@@ -245,8 +289,8 @@ export function createBot(opts: { token: string; botInfo?: UserFromGetMe; deps: 
   // ── Actions ─────────────────────────────────────────────────────────────────
 
   async function startContribution(p: Person, amount: bigint) {
-    const intent = await createContributionIntent(deps, { personId: p.id, amount });
-    await deps.notify(
+    const intent = await createContributionIntent(live(), { personId: p.id, amount });
+    await live().notify(
       p.id,
       [
         `¡Gracias por sumar ${formatPesos(amount)}! Así funciona:`,
@@ -262,7 +306,7 @@ export function createBot(opts: { token: string; botInfo?: UserFromGetMe; deps: 
 
   async function runAction(p: Person, action: MenuAction): Promise<void> {
     if (!menuActions(p).includes(action) && !(action === "crearFirma" && isSigner(p))) {
-      return deps.notify(p.id, TEXT.notAllowed);
+      return live().notify(p.id, TEXT.notAllowed);
     }
     switch (action) {
       case "aportar": {
@@ -270,42 +314,42 @@ export function createBot(opts: { token: string; botInfo?: UserFromGetMe; deps: 
           SUGGESTED_AMOUNTS.map((n) => ({ text: formatPesos(pesos(n)).replace(/,00$/, ""), data: `amt:${n}` })),
           [{ text: "Otro monto", data: "amt:otro" }],
         ];
-        return deps.notify(
+        return live().notify(
           p.id,
           "¿Cuánto querés aportar? El aporte es voluntario y cualquier monto ayuda. Elegí uno o escribí otro.",
           buttons,
         );
       }
       case "gastos":
-        return deps.notify(p.id, await spendingSummary(deps));
+        return live().notify(p.id, await spendingSummary(live()));
       case "misAportes":
-        return deps.notify(p.id, await myContributions(deps, p.id));
+        return live().notify(p.id, await myContributions(live(), p.id));
       case "cargarFactura":
-        return deps.notify(
+        return live().notify(
           p.id,
           "Mandame la factura acá mismo: mejor el PDF original; si es foto, que se vea entero el código QR. Tiene que ser factura B o C a nombre de la cooperadora.",
         );
       case "pendientes": {
-        const pending = await pendingPayments(deps);
-        if (pending.length === 0) return deps.notify(p.id, "No hay pagos esperando firmas.");
+        const pending = await pendingPayments(live());
+        if (pending.length === 0) return live().notify(p.id, "No hay pagos esperando firmas.");
         const lines = [`Hay ${pending.length} ${pending.length === 1 ? "pago esperando" : "pagos esperando"} firmas:`];
         const buttons: InlineButton[][] = [];
         for (const x of pending.slice(0, 5)) {
           lines.push(`• #${x.paymentId} · ${x.vendor} · ${formatPesos(x.amount)} · ${x.lineName} · ${x.approvals} de ${x.threshold} firmas`);
           if (isSigner(p) && p.safeAddress) {
-            const url = await paymentSignUrl(db, deps.appUrl, p.id, BigInt(x.paymentId), deps.now());
+            const url = await paymentSignUrl(db, live().appUrl, p.id, BigInt(x.paymentId), live().now());
             buttons.push([{ text: `Revisar y firmar #${x.paymentId}`, url }]);
           }
         }
         if (buttons.length > 0) lines.push("", "Abrí los links en Chrome o Safari para firmar.");
-        await deps.notify(p.id, lines.join("\n"), buttons.length ? buttons : undefined);
-        if (isSigner(p) && !p.safeAddress) await notifySignerWithoutPasskey(deps, p, "Para firmar estos pagos te falta crear tu firma.");
+        await live().notify(p.id, lines.join("\n"), buttons.length ? buttons : undefined);
+        if (isSigner(p) && !p.safeAddress) await notifySignerWithoutPasskey(live(), p, "Para firmar estos pagos te falta crear tu firma.");
         return;
       }
       case "proponer": {
-        if (!p.safeAddress) return notifySignerWithoutPasskey(deps, p, "Para proponer un cambio primero tenés que crear tu firma.");
-        const url = await proposeUrl(db, deps.appUrl, p.id, deps.now());
-        return deps.notify(
+        if (!p.safeAddress) return notifySignerWithoutPasskey(live(), p, "Para proponer un cambio primero tenés que crear tu firma.");
+        const url = await proposeUrl(db, live().appUrl, p.id, live().now());
+        return live().notify(
           p.id,
           "Desde este link podés proponer mover plata entre partidas (con el motivo, que queda público) o reanudar los pagos si están en pausa. El cambio se aplica cuando junta las firmas necesarias. Abrilo en Chrome o Safari.",
           [[{ text: "Proponer cambio", url }]],
@@ -313,25 +357,25 @@ export function createBot(opts: { token: string; botInfo?: UserFromGetMe; deps: 
       }
       case "revisar": {
         const [draft] = await db.select().from(reports).where(eq(reports.status, "borrador")).orderBy(reports.period);
-        if (!draft) return deps.notify(p.id, "No hay ninguna rendición esperando tu revisión.");
-        const url = await reviewUrl(db, deps.appUrl, p.id, draft.period, deps.now());
-        return deps.notify(
+        if (!draft) return live().notify(p.id, "No hay ninguna rendición esperando tu revisión.");
+        const url = await reviewUrl(db, live().appUrl, p.id, draft.period, live().now());
+        return live().notify(
           p.id,
           `La rendición de ${periodLabelEs(draft.period)} está en borrador. Revisala y, si está bien, dale el visto bueno desde la página.`,
           [[{ text: "Revisar rendición", url }]],
         );
       }
       case "revisarFacturas":
-        await listForReview(deps, p);
+        await listForReview(live(), p);
         return;
       case "crearFirma": {
-        if (p.safeAddress) return deps.notify(p.id, "Ya tenés tu firma creada.");
-        return notifySignerWithoutPasskey(deps, p, "Vamos a crear tu firma.");
+        if (p.safeAddress) return live().notify(p.id, "Ya tenés tu firma creada.");
+        return notifySignerWithoutPasskey(live(), p, "Vamos a crear tu firma.");
       }
       case "misCobros": {
-        if (!isVendor(p)) return deps.notify(p.id, TEXT.notAllowed);
-        const url = await vendorUrl(db, deps.appUrl, p.id, deps.now());
-        return deps.notify(
+        if (!isVendor(p)) return live().notify(p.id, TEXT.notAllowed);
+        const url = await vendorUrl(db, live().appUrl, p.id, live().now());
+        return live().notify(
           p.id,
           "En tu página ves lo que te pagó la cooperadora y podés pasarlo a tu cuenta bancaria. Abrila en Chrome o Safari.",
           [[{ text: "Mis cobros", url }]],

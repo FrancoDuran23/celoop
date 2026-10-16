@@ -3,6 +3,7 @@ import { concatHex, createPublicClient, custom, encodeFunctionData, encodePacked
 import { treasuryPolicyAbi } from "@/lib/chain/abi";
 import type { Db } from "@/db";
 import { passkeys, persons, vendors } from "@/db/schema";
+import { ensureCooperadora } from "@/db/testing";
 import { passkeySafeAccount } from "../account";
 import { MULTI_SEND_CALL_ONLY } from "../constants";
 import { createSignLink, type LinkPurpose, type LinkTarget } from "../links";
@@ -119,6 +120,7 @@ export async function seedPerson(db: Db, opts: { name?: string; safe?: Address |
 }
 
 export async function seedVendor(db: Db, opts: { personId?: number; address: Address; legalName?: string; cuit?: bigint }) {
+  await ensureCooperadora(db);
   const [vendor] = await db
     .insert(vendors)
     .values({

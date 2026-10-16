@@ -23,7 +23,7 @@ import {
   persons,
   proposals,
 } from "@/db/schema";
-import { createTestDb } from "@/db/testing";
+import { createTestDb, ensureCooperadora } from "@/db/testing";
 import { boxFactoryAbi, treasuryPolicyAbi } from "@/lib/chain/abi";
 import { resetEnv } from "@/lib/env";
 import { decodeProposalData, runIndexer, type IndexerSource, type RawLog } from "./index";
@@ -97,6 +97,7 @@ const REF = pad(toHex(0xabc), { size: 32 });
 beforeEach(async () => {
   resetEnv({ DEPLOY_BLOCK: "10" });
   db = await createTestDb();
+  await ensureCooperadora(db);
   source = new FakeSource();
   [{ id: personId }] = await db
     .insert(persons)

@@ -4,7 +4,8 @@
 import { decodeEventLog, encodeFunctionData, isAddressEqual, type Hex } from "viem";
 import { treasuryPolicyAbi } from "./abi";
 import { sendAgentTx, type AgentTxOptions } from "./agent";
-import { addressFromEnv, auditorAccount } from "./clients";
+import { resolveTreasury } from "@/lib/tenant";
+import { auditorAccount } from "./clients";
 
 export type AuditPaymentResult = {
   /** executed = the clearance paid it automatically; recorded = verdict stored, payment still pending. */
@@ -16,7 +17,7 @@ export async function auditPayment(
   args: { key: string; paymentId: bigint; cleared: boolean; reportHash: Hex },
   opts: AgentTxOptions = {},
 ): Promise<AuditPaymentResult> {
-  const treasury = addressFromEnv("TREASURY_ADDRESS");
+  const treasury = opts.treasury ?? (await resolveTreasury(opts.db));
   const data = encodeFunctionData({
     abi: treasuryPolicyAbi,
     functionName: "auditPayment",

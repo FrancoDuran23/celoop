@@ -24,9 +24,10 @@ import {
 import { getDb, type Db } from "@/db";
 import { agentTxs } from "@/db/schema";
 import { env } from "@/lib/env";
+import { resolveBoxFactory, resolveTreasury } from "@/lib/tenant";
 import { boxFactoryAbi, treasuryPolicyAbi } from "./abi";
 import { withAttribution } from "./attribution";
-import { addressFromEnv, agentAccount, agentWalletClient, publicClient } from "./clients";
+import { agentAccount, agentWalletClient, publicClient } from "./clients";
 import { boxAddress, warsBalanceOf } from "./treasury";
 
 export type AgentTxOptions = {
@@ -36,6 +37,9 @@ export type AgentTxOptions = {
   receiptTimeoutMs?: number;
   /** Who signs. Defaults to the agent (AGENT_PRIVATE_KEY); the auditor passes auditorAccount(). */
   account?: LocalAccount;
+  /** Which treasury this send talks to. Defaults to the env fallback or the only active row. */
+  treasury?: Address;
+  boxFactory?: Address;
 };
 
 export type AgentTxResult = { txHash: Hex; receipt: TransactionReceipt } | { dryRun: true };
@@ -291,7 +295,7 @@ export async function proposePayment(
   args: { key: string; vendor: Address; invoice: InvoiceKey; amount: bigint; lineId: Hex; fileHash: Hex },
   opts: AgentTxOptions = {},
 ): Promise<ProposePaymentResult> {
-  const treasury = addressFromEnv("TREASURY_ADDRESS");
+  const treasury = opts.treasury ?? (await resolveTreasury(opts.db));
   const data = encodeFunctionData({
     abi: treasuryPolicyAbi,
     functionName: "proposePayment",
@@ -331,14 +335,15 @@ export type SweepBoxResult = { status: "swept" | "empty" | "dry-run"; amount?: b
 /** Sweeps the deposit box of `ref` into the treasury. Sends nothing when the box is empty. */
 export async function sweepBox(args: { key: string; ref: Hex }, opts: AgentTxOptions = {}): Promise<SweepBoxResult> {
   const db = opts.db ?? getDb();
-  const factory = addressFromEnv("BOX_FACTORY_ADDRESS");
+  const scope = { db, treasury: opts.treasury, boxFactory: opts.boxFactory };
+  const factory = await resolveBoxFactory(db, opts.boxFactory);
   const data = encodeFunctionData({ abi: boxFactoryAbi, functionName: "sweep", args: [args.ref] });
 
   // A key already mined or in flight returns its own result; the box is empty by now.
   const existing = await findRow(db, args.key);
   let balance: bigint | undefined;
   if (!(existing && (existing.status === "mined" || (existing.status === "sending" && existing.txHash)))) {
-    balance = await warsBalanceOf(await boxAddress(args.ref));
+    balance = await warsBalanceOf(await boxAddress(args.ref, scope), scope);
     if (balance === BigInt(0)) return { status: "empty", amount: BigInt(0) };
   }
 

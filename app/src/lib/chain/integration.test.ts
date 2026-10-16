@@ -21,7 +21,7 @@ import { foundry } from "viem/chains";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import type { Db } from "@/db";
 import { agentTxs, budgetIndex, contributionIntents, contributions, payments, persons } from "@/db/schema";
-import { createTestDb } from "@/db/testing";
+import { createTestDb, ensureCooperadora } from "@/db/testing";
 import { resetEnv } from "@/lib/env";
 import { runIndexer } from "@/lib/indexer";
 import { treasuryPolicyAbi } from "./abi";
@@ -133,6 +133,7 @@ describe.skipIf(skipReason !== null)("chain module against anvil + module 01 con
     });
 
     db = await createTestDb();
+    await ensureCooperadora(db);
     [{ id: personId }] = await db
       .insert(persons)
       .values({ name: "Ana", phone: "+5493884000001", roles: ["socio"] })

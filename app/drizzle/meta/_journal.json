@@ -15,6 +15,13 @@
       "when": 1792076349362,
       "tag": "0001_brief_blob",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792140000000,
+      "tag": "0002_multi_tenant",
+      "breakpoints": true
     }
   ]
 }

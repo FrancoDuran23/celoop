@@ -29,7 +29,10 @@ export function SiteHeader() {
           <Logo compact />
         </Link>
         <nav aria-label="Main" className="flex items-center gap-4 text-sm font-extrabold">
-          <Link href="/#spending" className="text-ink no-underline hover:underline" tabIndex={hidden ? -1 : undefined}>
+          <Link href="/start" className="text-ink no-underline hover:underline" tabIndex={hidden ? -1 : undefined}>
+            Start a co-op
+          </Link>
+          <Link href="/#spending" className="hidden text-ink no-underline hover:underline sm:inline" tabIndex={hidden ? -1 : undefined}>
             Where it goes
           </Link>
           <Link

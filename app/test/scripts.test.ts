@@ -219,7 +219,7 @@ describe.skipIf(!hasAnvil)("setup.ts against a clean local anvil", { timeout: 30
     expect((await db.select().from(budgetLines)).map((l) => l.slug)).toContain("gastos-operativos");
 
     const out = log.join("\n");
-    for (const k of ["TREASURY_ADDRESS", "BOX_FACTORY_ADDRESS", "WARS_ADDRESS", "DEPLOY_BLOCK", "TICK_SECRET"]) expect(out).toContain(`${k}=`);
+    for (const k of ["FACTORY_ADDRESS", "WARS_ADDRESS", "DEPLOY_BLOCK", "TICK_SECRET"]) expect(out).toContain(`${k}=`);
     expect(out).not.toContain(AGENT_KEY.slice(2));
 
     // Every transaction setup sent carries the (dev) attribution tag, the deploy included.

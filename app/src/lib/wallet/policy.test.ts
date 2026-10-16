@@ -36,6 +36,7 @@ function link(purpose: ResolvedLink["purpose"], target: ResolvedLink["target"], 
     expiresAt: new Date(Date.now() + 1000),
     usedAt: null,
     person: { id: 1, name: "Ana", roles: [], safeAddress: safe },
+    cooperadoraId: null,
   };
 }
 

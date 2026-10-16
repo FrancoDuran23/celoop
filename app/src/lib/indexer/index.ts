@@ -18,6 +18,7 @@ import {
   proposals,
 } from "@/db/schema";
 import { required } from "@/lib/env";
+import { cooperadoraById, soleCooperadora } from "@/lib/tenant";
 import { decodeLog, decodeProposalData, proposalKindName, toJson, type DecodedLog } from "./decode";
 import { chainSource, type IndexerSource } from "./source";
 
@@ -31,8 +32,10 @@ const ONE = BigInt(1);
 export type IndexerOptions = {
   /** Blocks per getLogs range. Default 5,000. */
   maxBlocks?: bigint;
-  /** Defaults to chainSource() (Celo via viem). */
+  /** Defaults to chainSource() for this cooperative (or the only active one). */
   source?: IndexerSource;
+  /** Which cooperative to index. Defaults to the only active one, or 1. */
+  cooperadoraId?: number;
 };
 
 /**
@@ -44,29 +47,50 @@ export async function runIndexer(
   db: Db,
   opts: IndexerOptions = {},
 ): Promise<{ from: bigint; to: bigint; events: number }> {
-  const source = opts.source ?? chainSource();
+  const scope = await indexerScope(db, opts.cooperadoraId);
+  const source = opts.source ?? chainSource({
+    db,
+    treasury: scope.treasury,
+    boxFactory: scope.boxFactory,
+  });
   const maxBlocks = opts.maxBlocks && opts.maxBlocks > BigInt(0) ? opts.maxBlocks : DEFAULT_MAX_BLOCKS;
 
-  const [cursor] = await db.select().from(indexerCursor).where(eq(indexerCursor.key, CURSOR_KEY));
-  const from = cursor ? cursor.blockNumber + ONE : required("DEPLOY_BLOCK");
+  const [cursor] = await db
+    .select()
+    .from(indexerCursor)
+    .where(and(eq(indexerCursor.cooperadoraId, scope.id), eq(indexerCursor.key, CURSOR_KEY)));
+  const from = cursor ? cursor.blockNumber + ONE : (scope.deployBlock ?? required("DEPLOY_BLOCK"));
   const target = (await source.latestBlock()) - ONE;
 
   let events = 0;
   let start = from;
   while (start <= target) {
     const end = start + maxBlocks - ONE < target ? start + maxBlocks - ONE : target;
-    events += await indexRange(db, source, start, end);
+    events += await indexRange(db, source, start, end, scope.id);
     await db
       .insert(indexerCursor)
-      .values({ key: CURSOR_KEY, blockNumber: end, updatedAt: new Date() })
-      .onConflictDoUpdate({ target: indexerCursor.key, set: { blockNumber: end, updatedAt: new Date() } });
+      .values({ cooperadoraId: scope.id, key: CURSOR_KEY, blockNumber: end, updatedAt: new Date() })
+      .onConflictDoUpdate({
+        target: [indexerCursor.cooperadoraId, indexerCursor.key],
+        set: { blockNumber: end, updatedAt: new Date() },
+      });
     start = end + ONE;
   }
   return { from, to: target >= from ? target : from - ONE, events };
 }
 
 /** Applies the logs of [from, to]. Returns how many were new. */
-export async function indexRange(db: Db, source: IndexerSource, from: bigint, to: bigint): Promise<number> {
+async function indexerScope(db: Db, cooperadoraId?: number) {
+  const row = cooperadoraId != null ? await cooperadoraById(db, cooperadoraId) : await soleCooperadora(db);
+  return {
+    id: row?.id ?? cooperadoraId ?? 1,
+    deployBlock: row?.deployBlock ?? undefined,
+    treasury: (row?.treasuryAddress ?? undefined) as Address | undefined,
+    boxFactory: (row?.boxFactoryAddress ?? undefined) as Address | undefined,
+  };
+}
+
+export async function indexRange(db: Db, source: IndexerSource, from: bigint, to: bigint, cooperadoraId = 1): Promise<number> {
   const addresses = await source.addresses();
   const raw = await source.getLogs(from, to);
   const logs = raw
@@ -113,10 +137,11 @@ export async function indexRange(db: Db, source: IndexerSource, from: bigint, to
     if (seen.has(`${log.transactionHash.toLowerCase()}:${log.logIndex}`)) continue;
 
     const occurredAt = await blockTime(log.blockNumber);
-    await applyLog(db, log, occurredAt, unidentified);
+    await applyLog(db, log, occurredAt, unidentified, cooperadoraId);
     await db
       .insert(chainEvents)
       .values({
+        cooperadoraId,
         blockNumber: log.blockNumber,
         blockTime: occurredAt,
         txHash: log.transactionHash,
@@ -139,8 +164,8 @@ export async function indexRange(db: Db, source: IndexerSource, from: bigint, to
     };
     await db
       .insert(budgetIndex)
-      .values({ lineId, ...values })
-      .onConflictDoUpdate({ target: budgetIndex.lineId, set: values });
+      .values({ cooperadoraId, lineId, ...values })
+      .onConflictDoUpdate({ target: [budgetIndex.cooperadoraId, budgetIndex.lineId], set: values });
   }
   return applied;
 }
@@ -169,7 +194,7 @@ function unidentifiedTransfers(logs: DecodedLog[]): Set<DecodedLog> {
 
 const RULES = ["auto", "signers"] as const;
 
-async function applyLog(db: Db, log: DecodedLog, occurredAt: Date, unidentified: Set<DecodedLog>) {
+async function applyLog(db: Db, log: DecodedLog, occurredAt: Date, unidentified: Set<DecodedLog>, cooperadoraId: number) {
   const a = log.args;
   const txHash = log.transactionHash;
   const logIndex = log.logIndex;
@@ -184,6 +209,7 @@ async function applyLog(db: Db, log: DecodedLog, occurredAt: Date, unidentified:
       await db
         .insert(contributions)
         .values({
+          cooperadoraId,
           ref: intent?.ref ?? ref,
           personId: intent?.personId ?? null,
           amount: (a.amount as bigint).toString(),
@@ -208,6 +234,7 @@ async function applyLog(db: Db, log: DecodedLog, occurredAt: Date, unidentified:
       await db
         .insert(contributions)
         .values({
+          cooperadoraId,
           ref: null,
           personId: null,
           amount: (a.value as bigint).toString(),
@@ -225,6 +252,7 @@ async function applyLog(db: Db, log: DecodedLog, occurredAt: Date, unidentified:
       await db
         .insert(payments)
         .values({
+          cooperadoraId,
           paymentId: a.paymentId as bigint,
           vendor: a.vendor as Address,
           amount: (a.amount as bigint).toString(),
@@ -235,7 +263,10 @@ async function applyLog(db: Db, log: DecodedLog, occurredAt: Date, unidentified:
           proposedTxHash: txHash,
         })
         // Never touches status: a replay must not undo a later execution.
-        .onConflictDoUpdate({ target: payments.paymentId, set: { proposedTxHash: txHash } });
+        .onConflictDoUpdate({
+          target: [payments.cooperadoraId, payments.paymentId],
+          set: { proposedTxHash: txHash },
+        });
       return;
     }
 
@@ -252,6 +283,7 @@ async function applyLog(db: Db, log: DecodedLog, occurredAt: Date, unidentified:
       await db
         .insert(payments)
         .values({
+          cooperadoraId,
           paymentId: a.paymentId as bigint,
           vendor: a.vendor as Address,
           amount: (a.amount as bigint).toString(),
@@ -260,7 +292,7 @@ async function applyLog(db: Db, log: DecodedLog, occurredAt: Date, unidentified:
           fileHash: a.fileHash as Hex,
           ...executed,
         })
-        .onConflictDoUpdate({ target: payments.paymentId, set: executed });
+        .onConflictDoUpdate({ target: [payments.cooperadoraId, payments.paymentId], set: executed });
       return;
     }
 
@@ -268,8 +300,8 @@ async function applyLog(db: Db, log: DecodedLog, occurredAt: Date, unidentified:
       await db
         .update(payments)
         .set({ approvals: Number(a.approvals), updatedAt: new Date() })
-        .where(eq(payments.paymentId, a.paymentId as bigint));
-      await insertApproval(db, "payment", a.paymentId as bigint, a.signer as Address, txHash, logIndex, occurredAt);
+        .where(and(eq(payments.cooperadoraId, cooperadoraId), eq(payments.paymentId, a.paymentId as bigint)));
+      await insertApproval(db, cooperadoraId, "payment", a.paymentId as bigint, a.signer as Address, txHash, logIndex, occurredAt);
       return;
     }
 
@@ -277,7 +309,7 @@ async function applyLog(db: Db, log: DecodedLog, occurredAt: Date, unidentified:
       await db
         .update(payments)
         .set({ status: "rejected", updatedAt: new Date() })
-        .where(and(eq(payments.paymentId, a.paymentId as bigint), eq(payments.status, "pending")));
+        .where(and(eq(payments.cooperadoraId, cooperadoraId), eq(payments.paymentId, a.paymentId as bigint), eq(payments.status, "pending")));
       return;
     }
 
@@ -290,7 +322,7 @@ async function applyLog(db: Db, log: DecodedLog, occurredAt: Date, unidentified:
           auditTxHash: txHash,
           updatedAt: new Date(),
         })
-        .where(eq(payments.paymentId, a.paymentId as bigint));
+        .where(and(eq(payments.cooperadoraId, cooperadoraId), eq(payments.paymentId, a.paymentId as bigint)));
       return;
     }
 
@@ -299,6 +331,7 @@ async function applyLog(db: Db, log: DecodedLog, occurredAt: Date, unidentified:
       await db
         .insert(proposals)
         .values({
+          cooperadoraId,
           proposalId: a.proposalId as bigint,
           kind: proposalKindName(kind),
           data: a.data as Hex,
@@ -311,7 +344,7 @@ async function applyLog(db: Db, log: DecodedLog, occurredAt: Date, unidentified:
         // The signing page may have inserted the row first with only its reasonText; fill in the
         // event's fields but never touch reasonText, approvals or status.
         .onConflictDoUpdate({
-          target: proposals.proposalId,
+          target: [proposals.cooperadoraId, proposals.proposalId],
           set: {
             kind: proposalKindName(kind),
             data: a.data as Hex,
@@ -327,8 +360,8 @@ async function applyLog(db: Db, log: DecodedLog, occurredAt: Date, unidentified:
       await db
         .update(proposals)
         .set({ approvals: Number(a.approvals), updatedAt: new Date() })
-        .where(eq(proposals.proposalId, a.proposalId as bigint));
-      await insertApproval(db, "proposal", a.proposalId as bigint, a.signer as Address, txHash, logIndex, occurredAt);
+        .where(and(eq(proposals.cooperadoraId, cooperadoraId), eq(proposals.proposalId, a.proposalId as bigint)));
+      await insertApproval(db, cooperadoraId, "proposal", a.proposalId as bigint, a.signer as Address, txHash, logIndex, occurredAt);
       return;
     }
 
@@ -336,7 +369,7 @@ async function applyLog(db: Db, log: DecodedLog, occurredAt: Date, unidentified:
       await db
         .update(proposals)
         .set({ status: "executed", executedTxHash: txHash, updatedAt: new Date() })
-        .where(eq(proposals.proposalId, a.proposalId as bigint));
+        .where(and(eq(proposals.cooperadoraId, cooperadoraId), eq(proposals.proposalId, a.proposalId as bigint)));
       return;
     }
 
@@ -350,6 +383,7 @@ async function applyLog(db: Db, log: DecodedLog, occurredAt: Date, unidentified:
 
 async function insertApproval(
   db: Db,
+  cooperadoraId: number,
   target: "payment" | "proposal",
   targetId: bigint,
   signer: Address,
@@ -359,6 +393,6 @@ async function insertApproval(
 ) {
   await db
     .insert(approvals)
-    .values({ target, targetId, signer, txHash, logIndex, occurredAt })
+    .values({ cooperadoraId, target, targetId, signer, txHash, logIndex, occurredAt })
     .onConflictDoNothing();
 }

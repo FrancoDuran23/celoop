@@ -2,8 +2,9 @@
 
 Antes "Cooperadora Segura". Dos agentes para la tesorería de una cooperadora escolar argentina, sobre Celo y con wARS: un **tesorero** que cobra aportes, paga a proveedores dentro del presupuesto votado y arma la rendición, y un **auditor** con su propia llave que revisa cada pago antes de que salga (puede frenarlo, nunca empujarlo). El diseño está en [`docs/sdd.md`](docs/sdd.md) y las specs por módulo en [`docs/specs/`](docs/specs/README.md).
 
-- `contracts/`: contratos en Solidity con Foundry (`TreasuryPolicy`, `BoxFactory`, `DepositBox`).
-- `app/`: Next.js con el bot de Telegram, el orquestador, la página de firma, el panel y la rendición.
+- `contracts/`: contratos en Solidity con Foundry (`TreasuryPolicy`, `BoxFactory`, `DepositBox`, `CooperadoraFactory`).
+- `app/`: Next.js con el bot de Telegram, el orquestador, el alta de cooperadoras, la página de firma, el panel y la rendición.
+- `cron/`: Worker de Cloudflare que llama al tick y al auditor cada minuto.
 
 ## Cómo correrlo
 
@@ -34,7 +35,7 @@ Hace falta Node 20 o más nuevo y [mise](https://mise.jdx.dev), que instala Foun
    npx tsx scripts/setup.ts scripts/config/demo.json
    ```
    El script hace todo esto:
-   - despliega `MockWARS`, `TreasuryPolicy` y `BoxFactory` con `contracts/script/Deploy.s.sol`;
+   - despliega `MockWARS` y `CooperadoraFactory`, y crea la cooperadora demo (su `TreasuryPolicy` y su `BoxFactory`) en una sola transacción;
    - carga las 6 partidas y el proveedor con propuestas firmadas por claves de prueba de anvil;
    - migra y siembra la base;
    - imprime las variables de entorno.
@@ -54,11 +55,46 @@ Hace falta Node 20 o más nuevo y [mise](https://mise.jdx.dev), que instala Foun
    - poné `APP_URL` con esa URL, `TELEGRAM_BOT_TOKEN` y `TELEGRAM_WEBHOOK_SECRET` en `app/.env`;
    - corré `npx tsx scripts/telegram-webhook.ts`;
    - para entrar al bot con tu teléfono, cambiá el `phone` de una persona en `scripts/config/demo.json` antes del paso 5.
-9. **Correr el tick y la ronda del auditor.** En producción los llama un cron cada minuto. A mano:
+9. **Correr el tick y la ronda del auditor.** En producción los llama el Worker de `cron/` cada minuto (recorre las cooperadoras activas, de a una por el límite de 300 s). A mano:
    ```bash
    curl -X POST -H "Authorization: Bearer $TICK_SECRET" http://localhost:3000/api/tick
    curl -X POST -H "Authorization: Bearer $TICK_SECRET" http://localhost:3000/api/auditor
    ```
+
+## Varias cooperadoras
+
+Cada cooperadora tiene su tesoro. `CooperadoraFactory.create` despliega `TreasuryPolicy` y `BoxFactory` en una transacción y los anota en un registro. La fila de la base guarda esas direcciones, los topes y el estado (`draft` hasta el deploy, `active` después). Las tablas de pagos, partidas, facturas, propuestas, cursores y locks llevan `cooperadora_id`. La demo sigue siendo la fila `id = 1`.
+
+Quien quiera abrir una cooperadora entra a `/start`, invita a los firmantes (cada uno crea su Safe con passkey en `/firmar/alta`), carga umbral, topes y partidas, y despliega. Las partidas no van en el constructor: después del deploy, `/c/<id>/settings` arma links para que los firmantes las propongan en `/firmar/proponer`. Un cambio de topes, partidas o proveedores es una propuesta on-chain (`propose` / `approveProposal`).
+
+El bot es uno solo (`@Minga_coop_bot`). Si una persona está en más de una cooperadora, elige cuál con los botones del chat.
+
+La variable de entorno del contrato de la plataforma es `FACTORY_ADDRESS`. `TREASURY_ADDRESS` y `BOX_FACTORY_ADDRESS` quedan como respaldo opcional para un deploy viejo o para los tests de integración; si no están, la app usa la única cooperadora activa, o la que dice la ruta o la sesión.
+
+### Migración
+
+`app/drizzle/0002_multi_tenant.sql` corre sobre la base que ya existe:
+
+```bash
+cd app && npm run db:migrate
+```
+
+Agrega `cooperadora_id` con default `1` (la demo no se mueve de fila), crea la secuencia de ids, y copia los roles de `persons` a `memberships` de la cooperadora 1. Los ids de pagos y propuestas siguen siendo por tesoro: la clave pasa a ser `(cooperadora_id, id)`.
+
+### Deploy de la factory y del worker
+
+1. **Factory.** Corré `setup.ts` como en el paso 5 (en mainnet, con `--yes`). El script imprime `FACTORY_ADDRESS`. Pegala en Vercel. El tesoro y el box factory de la demo quedan en la fila, no hace falta repetirlos en el env. Recién cuando esa fila está cargada se pueden sacar `TREASURY_ADDRESS` y `BOX_FACTORY_ADDRESS` si venían de un deploy anterior.
+2. **App.** Redeploy de la rama `FrancoDuran23/front` en Vercel, con `FACTORY_ADDRESS` y el mismo `TICK_SECRET` de siempre.
+3. **Cron.** Desde la raíz del repo:
+
+   ```bash
+   cd cron
+   npx wrangler login
+   npx wrangler secret put TICK_SECRET
+   npx wrangler deploy
+   ```
+
+   `TICK_SECRET` tiene que ser el mismo valor que en Vercel. `APP_URL` está en `cron/wrangler.toml` (`https://celoop-rouge.vercel.app`). El trigger `* * * * *` hace `POST /api/tick` y `POST /api/auditor` con `Authorization: Bearer TICK_SECRET`.
 
 ### Tests
 

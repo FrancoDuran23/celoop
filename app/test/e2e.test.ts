@@ -373,7 +373,7 @@ describe.skipIf(skipReason !== null)("e2e: the demo flows on a fork of Celo main
       keccak256(readFileSync(path.resolve(__dirname, "../scripts/config/acta-demo.pdf"))),
     );
     expect(people.operador.roles).toEqual(["operador"]);
-    expect(setupLog.join("\n")).toContain(`TREASURY_ADDRESS=${treasury}`);
+    expect(setupLog.join("\n")).toContain(`FACTORY_ADDRESS=${setup.deployment.factory}`);
   });
 
   test("ERC-8004: the agent registers in the Identity Registry on the fork", async () => {
@@ -447,7 +447,7 @@ describe.skipIf(skipReason !== null)("e2e: the demo flows on a fork of Celo main
     expect(await warsBalanceOf(addr.vendor)).toBe(pesos(12_500));
 
     // The auditor read the QR itself and wrote its verdict and report hash on chain.
-    const onchainAudit = await getPaymentAudit(paid.paymentId!);
+    const onchainAudit = await getPaymentAudit(paid.paymentId!, { treasury, db: h.db });
     const [audit] = await h.db.select().from(audits).where(eq(audits.paymentId, paid.paymentId!));
     expect(audit.verdict).toBe("cleared");
     expect(onchainAudit).toEqual({ status: "cleared", reportHash: keccak256(toHex(audit.reportJson)) });
@@ -489,20 +489,20 @@ describe.skipIf(skipReason !== null)("e2e: the demo flows on a fork of Celo main
     const pending = await invoiceRow(inv.id);
     expect(pending.status).toBe("pendiente");
     const paymentId = pending.paymentId!;
-    expect((await getPayment(paymentId)).status).toBe("pending");
+    expect((await getPayment(paymentId, { treasury, db: h.db })).status).toBe("pending");
     for (const who of ["presidente", "tesorero", "revisor"] as const) {
       expect(inbox(who).some((m) => m.buttons.some((b) => b.url?.includes(`/firmar/pago/${paymentId}?t=`))), who).toBe(true);
     }
     expect(seen("secretario").join("\n")).toContain("creá tu firma");
     expect(seen("presidente").join("\n")).toContain("El auditor la revisó y no encontró problemas");
-    expect((await getPaymentAudit(paymentId)).status).toBe("cleared");
+    expect((await getPaymentAudit(paymentId, { treasury, db: h.db })).status).toBe("cleared");
 
     // Two signers approve (EOAs standing in for their passkey Safes).
     const approve = encodeFunctionData({ abi: treasuryPolicyAbi, functionName: "approve", args: [paymentId] });
     await sendTagged(keys.presidente, treasury, approve);
-    expect((await getPayment(paymentId)).status).toBe("pending");
+    expect((await getPayment(paymentId, { treasury, db: h.db })).status).toBe("pending");
     await sendTagged(keys.tesorero, treasury, approve);
-    expect((await getPayment(paymentId)).status).toBe("executed");
+    expect((await getPayment(paymentId, { treasury, db: h.db })).status).toBe("executed");
 
     await tick();
     expect((await invoiceRow(inv.id)).status).toBe("pagada");
@@ -520,8 +520,8 @@ describe.skipIf(skipReason !== null)("e2e: the demo flows on a fork of Celo main
     const held = await invoiceRow(inv.id);
     expect(held).toMatchObject({ status: "pendiente", statusReason: "observada por el auditor" });
     const paymentId = held.paymentId!;
-    expect(await getPaymentAudit(paymentId)).toMatchObject({ status: "flagged" });
-    expect((await getPayment(paymentId)).status).toBe("pending");
+    expect(await getPaymentAudit(paymentId, { treasury, db: h.db })).toMatchObject({ status: "flagged" });
+    expect((await getPayment(paymentId, { treasury, db: h.db })).status).toBe("pending");
     expect(await warsBalanceOf(addr.vendor)).toBe(pesos(12_500 + 80_000));
 
     expect(seen("revisor").join("\n")).toContain(`Auditor: revisé el pago #${paymentId}`);
@@ -655,8 +655,9 @@ describe.skipIf(skipReason !== null)("e2e: the demo flows on a fork of Celo main
     expect(txs.length).toBeGreaterThanOrEqual(33);
     const untagged = txs.filter((tx) => JSON.stringify(readAttribution(tx.input)) !== JSON.stringify([CODE]));
     expect(untagged.map((t) => ({ hash: t.hash, from: t.from, to: t.to }))).toEqual([]);
-    // The deploy came first and is tagged too: creations have no `to`.
-    expect(txs.filter((t) => t.to === null)).toHaveLength(3);
+    // Token and CooperadoraFactory are created directly. The treasury and box factory
+    // are created inside factory.create, so that transaction has a recipient.
+    expect(txs.filter((t) => t.to === null)).toHaveLength(2);
     // The treasurer: identity, 3 proposals and the sweep. The auditor: identity and 3 verdicts.
     expect(txs.filter((t) => t.from.toLowerCase() === addr.agent.toLowerCase()).length).toBe(5);
     expect(txs.filter((t) => t.from.toLowerCase() === addr.auditor.toLowerCase()).length).toBe(4);

@@ -1,6 +1,7 @@
 // Shared database schema. The contract is the source of truth for money; these tables hold
 // people, files, the event index and the agent's own bookkeeping.
 // Amounts are wARS base units (18 decimals) stored as numeric strings.
+import { sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
@@ -8,9 +9,11 @@ import {
   jsonb,
   numeric,
   pgTable,
+  primaryKey,
   serial,
   text,
   timestamp,
+  unique,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 
@@ -18,18 +21,41 @@ const amount = (name: string) => numeric(name, { precision: 78, scale: 0 });
 const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
 const updatedAt = () => timestamp("updated_at", { withTimezone: true }).notNull().defaultNow();
 
-/** The one cooperadora this instance serves. Single row, id = 1. */
+/**
+ * One row per school cooperative. `draft` rows have no treasury yet (self-serve signup).
+ * `active` rows have been deployed through CooperadoraFactory. The demo seed is id = 1.
+ */
 export const cooperadora = pgTable("cooperadora", {
-  id: integer("id").primaryKey().default(1),
+  id: integer("id").primaryKey().default(sql`nextval('cooperadora_id_seq')`),
   name: text("name").notNull(),
   school: text("school").notNull(),
   cuit: bigint("cuit", { mode: "bigint" }).notNull(),
   ruce: text("ruce"),
   chainId: integer("chain_id").notNull(),
-  treasuryAddress: text("treasury_address").notNull(),
-  boxFactoryAddress: text("box_factory_address").notNull(),
-  configHash: text("config_hash").notNull(),
+  /** Null until CooperadoraFactory.create lands. */
+  treasuryAddress: text("treasury_address"),
+  boxFactoryAddress: text("box_factory_address"),
+  configHash: text("config_hash"),
+  /** draft | active */
+  status: text("status").notNull().default("active"),
+  /** Id in CooperadoraFactory's registry. */
+  onchainId: integer("onchain_id"),
+  threshold: integer("threshold"),
+  perTxCap: amount("per_tx_cap"),
+  vendorMonthlyCap: amount("vendor_monthly_cap"),
+  deployBlock: bigint("deploy_block", { mode: "bigint" }),
+  /** Signup payload: lines, caps, signer person ids. Applied on chain after deploy via proposals. */
+  draft: jsonb("draft"),
+  /** Cookie secret for the person who started signup. */
+  setupToken: text("setup_token").unique(),
   createdAt: createdAt(),
+});
+
+/** Where the tick and the auditor left off, so the next minute continues with the next cooperative. */
+export const jobCursor = pgTable("job_cursor", {
+  name: text("name").primaryKey(),
+  position: integer("position").notNull(),
+  updatedAt: updatedAt(),
 });
 
 /** Every human: socio, comisión, revisor, asesor, proveedor. Identified by phone. No student data. */
@@ -46,6 +72,18 @@ export const persons = pgTable("persons", {
   createdAt: createdAt(),
 });
 
+/** A person can belong to several cooperadoras, with different roles in each. */
+export const memberships = pgTable(
+  "memberships",
+  {
+    personId: integer("person_id").notNull().references(() => persons.id),
+    cooperadoraId: integer("cooperadora_id").notNull().references(() => cooperadora.id),
+    roles: text("roles").array().notNull().default([]),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.personId, t.cooperadoraId] })],
+);
+
 /** WebAuthn credentials that own a person's Safe. */
 export const passkeys = pgTable("passkeys", {
   id: serial("id").primaryKey(),
@@ -56,34 +94,50 @@ export const passkeys = pgTable("passkeys", {
   createdAt: createdAt(),
 });
 
-export const vendors = pgTable("vendors", {
-  id: serial("id").primaryKey(),
-  personId: integer("person_id").references(() => persons.id),
-  legalName: text("legal_name").notNull(),
-  cuit: bigint("cuit", { mode: "bigint" }).notNull().unique(),
-  address: text("address").notNull().unique(),
-  enabled: boolean("enabled").notNull().default(true),
-  createdAt: createdAt(),
-});
+export const vendors = pgTable(
+  "vendors",
+  {
+    id: serial("id").primaryKey(),
+    cooperadoraId: integer("cooperadora_id").notNull().default(1).references(() => cooperadora.id),
+    personId: integer("person_id").references(() => persons.id),
+    legalName: text("legal_name").notNull(),
+    cuit: bigint("cuit", { mode: "bigint" }).notNull(),
+    address: text("address").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    createdAt: createdAt(),
+  },
+  (t) => [unique("vendors_coop_cuit").on(t.cooperadoraId, t.cuit), unique("vendors_coop_address").on(t.cooperadoraId, t.address)],
+);
 
 /** Human labels for budget lines. Amounts live on chain (mirrored by the indexer in budgetIndex). */
-export const budgetLines = pgTable("budget_lines", {
-  lineId: text("line_id").primaryKey(), // bytes32 hex = keccak256(slug)
-  slug: text("slug").notNull().unique(), // materiales, mantenimiento, comedor, eventos, imprevistos, gastos-operativos
-  name: text("name").notNull(),
-});
+export const budgetLines = pgTable(
+  "budget_lines",
+  {
+    cooperadoraId: integer("cooperadora_id").notNull().default(1).references(() => cooperadora.id),
+    lineId: text("line_id").notNull(), // bytes32 hex = keccak256(slug)
+    slug: text("slug").notNull(),
+    name: text("name").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.cooperadoraId, t.lineId] }), unique("budget_lines_coop_slug").on(t.cooperadoraId, t.slug)],
+);
 
-export const budgetIndex = pgTable("budget_index", {
-  lineId: text("line_id").primaryKey(),
-  allocated: amount("allocated").notNull(),
-  spent: amount("spent").notNull(),
-  periodEnd: bigint("period_end", { mode: "number" }).notNull(),
-  updatedAt: updatedAt(),
-});
+export const budgetIndex = pgTable(
+  "budget_index",
+  {
+    cooperadoraId: integer("cooperadora_id").notNull().default(1).references(() => cooperadora.id),
+    lineId: text("line_id").notNull(),
+    allocated: amount("allocated").notNull(),
+    spent: amount("spent").notNull(),
+    periodEnd: bigint("period_end", { mode: "number" }).notNull(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [primaryKey({ columns: [t.cooperadoraId, t.lineId] })],
+);
 
 /** One per "Aportar" tap: a one-time deposit box. ref is random; the person link never goes on chain. */
 export const contributionIntents = pgTable("contribution_intents", {
   ref: text("ref").primaryKey(), // bytes32 hex
+  cooperadoraId: integer("cooperadora_id").notNull().default(1).references(() => cooperadora.id),
   personId: integer("person_id").notNull().references(() => persons.id),
   suggestedAmount: amount("suggested_amount"),
   boxAddress: text("box_address").notNull().unique(),
@@ -97,6 +151,7 @@ export const contributions = pgTable(
   "contributions",
   {
     id: serial("id").primaryKey(),
+    cooperadoraId: integer("cooperadora_id").notNull().default(1).references(() => cooperadora.id),
     ref: text("ref"), // null for unidentified transfers and manual entries
     personId: integer("person_id").references(() => persons.id),
     amount: amount("amount").notNull(),
@@ -120,6 +175,7 @@ export const invoices = pgTable(
   "invoices",
   {
     id: serial("id").primaryKey(),
+    cooperadoraId: integer("cooperadora_id").notNull().default(1).references(() => cooperadora.id),
     uploaderPersonId: integer("uploader_person_id").notNull().references(() => persons.id),
     vendorId: integer("vendor_id").references(() => vendors.id),
     status: text("status").notNull().default("recibida"),
@@ -144,12 +200,15 @@ export const invoices = pgTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [uniqueIndex("invoices_invoice_id").on(t.invoiceId)],
+  (t) => [uniqueIndex("invoices_coop_invoice_id").on(t.cooperadoraId, t.invoiceId)],
 );
 
 /** Index of on-chain payments. */
-export const payments = pgTable("payments", {
-  paymentId: bigint("payment_id", { mode: "bigint" }).primaryKey(),
+export const payments = pgTable(
+  "payments",
+  {
+  cooperadoraId: integer("cooperadora_id").notNull().default(1).references(() => cooperadora.id),
+  paymentId: bigint("payment_id", { mode: "bigint" }).notNull(),
   vendor: text("vendor").notNull(),
   amount: amount("amount").notNull(),
   lineId: text("line_id").notNull(),
@@ -168,25 +227,35 @@ export const payments = pgTable("payments", {
   auditReportHash: text("audit_report_hash"),
   auditTxHash: text("audit_tx_hash"),
   updatedAt: updatedAt(),
-});
+  },
+  (t) => [primaryKey({ columns: [t.cooperadoraId, t.paymentId] })],
+);
 
 /**
  * The auditor's own record of each review. `reportJson` is the exact text whose keccak256 the
  * auditor sends with auditPayment, so anyone can fetch it and check the hash on chain.
  * Findings: [{ code, level: "observacion" | "nota", text }]. An observación sends the payment to signers.
  */
-export const audits = pgTable("audits", {
-  paymentId: bigint("payment_id", { mode: "bigint" }).primaryKey(),
+export const audits = pgTable(
+  "audits",
+  {
+  cooperadoraId: integer("cooperadora_id").notNull().default(1).references(() => cooperadora.id),
+  paymentId: bigint("payment_id", { mode: "bigint" }).notNull(),
   verdict: text("verdict").notNull(), // cleared | flagged
   findings: jsonb("findings").notNull(),
   reportJson: text("report_json").notNull(),
   reportHash: text("report_hash").notNull(),
   createdAt: createdAt(),
-});
+  },
+  (t) => [primaryKey({ columns: [t.cooperadoraId, t.paymentId] })],
+);
 
 /** Index of configuration proposals. reasonText is the human motive (its hash is on chain for moves). */
-export const proposals = pgTable("proposals", {
-  proposalId: bigint("proposal_id", { mode: "bigint" }).primaryKey(),
+export const proposals = pgTable(
+  "proposals",
+  {
+  cooperadoraId: integer("cooperadora_id").notNull().default(1).references(() => cooperadora.id),
+  proposalId: bigint("proposal_id", { mode: "bigint" }).notNull(),
   kind: text("kind").notNull(),
   data: text("data").notNull(), // hex
   decoded: jsonb("decoded"),
@@ -197,12 +266,15 @@ export const proposals = pgTable("proposals", {
   createdTxHash: text("created_tx_hash"),
   executedTxHash: text("executed_tx_hash"),
   updatedAt: updatedAt(),
-});
+  },
+  (t) => [primaryKey({ columns: [t.cooperadoraId, t.proposalId] })],
+);
 
 export const approvals = pgTable(
   "approvals",
   {
     id: serial("id").primaryKey(),
+    cooperadoraId: integer("cooperadora_id").notNull().default(1).references(() => cooperadora.id),
     target: text("target").notNull(), // payment | proposal
     targetId: bigint("target_id", { mode: "bigint" }).notNull(),
     signer: text("signer").notNull(),
@@ -218,6 +290,7 @@ export const chainEvents = pgTable(
   "chain_events",
   {
     id: serial("id").primaryKey(),
+    cooperadoraId: integer("cooperadora_id").notNull().default(1).references(() => cooperadora.id),
     blockNumber: bigint("block_number", { mode: "bigint" }).notNull(),
     blockTime: timestamp("block_time", { withTimezone: true }).notNull(),
     txHash: text("tx_hash").notNull(),
@@ -229,11 +302,16 @@ export const chainEvents = pgTable(
   (t) => [uniqueIndex("chain_events_tx_log").on(t.txHash, t.logIndex)],
 );
 
-export const indexerCursor = pgTable("indexer_cursor", {
-  key: text("key").primaryKey(),
-  blockNumber: bigint("block_number", { mode: "bigint" }).notNull(),
-  updatedAt: updatedAt(),
-});
+export const indexerCursor = pgTable(
+  "indexer_cursor",
+  {
+    cooperadoraId: integer("cooperadora_id").notNull().default(1).references(() => cooperadora.id),
+    key: text("key").notNull(),
+    blockNumber: bigint("block_number", { mode: "bigint" }).notNull(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [primaryKey({ columns: [t.cooperadoraId, t.key] })],
+);
 
 /**
  * Agent transactions with an idempotency key (e.g. "propose:invoice:42", "sweep:<ref>").
@@ -241,6 +319,7 @@ export const indexerCursor = pgTable("indexer_cursor", {
  */
 export const agentTxs = pgTable("agent_txs", {
   id: serial("id").primaryKey(),
+  cooperadoraId: integer("cooperadora_id").notNull().default(1).references(() => cooperadora.id),
   key: text("key").notNull().unique(),
   kind: text("kind").notNull(), // propose | sweep | register | other
   status: text("status").notNull(), // sending | mined | reverted | failed
@@ -259,9 +338,12 @@ export const locks = pgTable("locks", {
 });
 
 /** Monthly rendición. borrador → revisada → publicada. */
-export const reports = pgTable("reports", {
+export const reports = pgTable(
+  "reports",
+  {
   id: serial("id").primaryKey(),
-  period: text("period").notNull().unique(), // YYYY-MM
+  cooperadoraId: integer("cooperadora_id").notNull().default(1).references(() => cooperadora.id),
+  period: text("period").notNull(), // YYYY-MM
   status: text("status").notNull().default("borrador"),
   data: jsonb("data").notNull(), // the full computed report
   pdfUrl: text("pdf_url"),
@@ -269,7 +351,9 @@ export const reports = pgTable("reports", {
   reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
   publishedAt: timestamp("published_at", { withTimezone: true }),
   createdAt: createdAt(),
-});
+  },
+  (t) => [unique("reports_coop_period").on(t.cooperadoraId, t.period)],
+);
 
 /** Per-chat conversation state for the Telegram bot. */
 export const chatState = pgTable("chat_state", {
@@ -281,6 +365,7 @@ export const chatState = pgTable("chat_state", {
 /** One-time links sent over Telegram to open the signing page in the phone's browser. */
 export const signLinks = pgTable("sign_links", {
   token: text("token").primaryKey(),
+  cooperadoraId: integer("cooperadora_id").references(() => cooperadora.id),
   personId: integer("person_id").notNull().references(() => persons.id),
   purpose: text("purpose").notNull(), // enroll | sign | vendor
   target: jsonb("target"), // e.g. { paymentId: "3" } or { proposalId: "1" }

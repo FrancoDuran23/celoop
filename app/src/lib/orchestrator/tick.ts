@@ -5,6 +5,7 @@ import { and, eq, gt, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import type { Address, Hex } from "viem";
 import { agentTxs, budgetIndex, budgetLines, contributionIntents, contributions, cooperadora, reports } from "@/db/schema";
 import { withLock } from "@/lib/locks";
+import { activeCooperadoras, readJobCursor, rotateAfter, tickLock, writeJobCursor } from "@/lib/tenant";
 import { explorerTxUrl, formatDate, periodLabelEs, periodRange, previousPeriod } from "@/lib/report/format";
 import { notifyOnce, type AgentDeps } from "./deps";
 import { claimNotice, releaseNotice } from "./chat-state";
@@ -13,8 +14,11 @@ import { AGENT_TX_LOCK, AGENT_TX_LOCK_MS, syncInvoices } from "./invoice";
 import { reviewUrl, urls } from "./links";
 import { COMMISSION_ROLES, OPERATOR_ROLE, personsWithRoles, REVIEWER_ROLE } from "./people";
 
+/** @deprecated Per-cooperative locks are `tick:<id>`. Kept so older callers can still name the idea. */
 export const TICK_LOCK = "tick";
 export const TICK_LOCK_MS = 300_000;
+/** Leave headroom under the 300s function limit. */
+export const TICK_BUDGET_MS = 240_000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 export const INTENT_TTL_MS = 7 * DAY_MS;
 export const STUCK_SENDING_MS = 10 * 60 * 1000;
@@ -28,34 +32,74 @@ export type TickSummary = {
 };
 
 export async function runTick(deps: AgentDeps): Promise<TickSummary | { skipped: true }> {
-  return withLock(deps.db, TICK_LOCK, TICK_LOCK_MS, async () => {
-    const steps: Record<string, unknown> = {};
-    const errors: string[] = [];
-    const step = async <T>(name: string, fn: () => Promise<T>): Promise<T | undefined> => {
-      try {
-        const r = await fn();
-        steps[name] = r ?? "ok";
-        return r;
-      } catch (e) {
-        console.error(`tick ${name}: ${errorText(e)}`);
-        errors.push(`${name}: ${errorText(e)}`);
-        return undefined;
-      }
-    };
+  const coops = await activeCooperadoras(deps.db);
+  const budget = deps.tickBudgetMs ?? TICK_BUDGET_MS;
+  const started = Date.now();
+  const ordered = rotateAfter(coops, await readJobCursor(deps.db, "tick"));
+  const perCoop: Record<string, unknown>[] = [];
+  const errors: string[] = [];
+  let ran = 0;
 
-    await step("indexer", () => deps.indexer());
-    const sweeps = await step("sweeps", () => sweepBoxes(deps));
-    const late = await step("expiredSweeps", () => sweepExpiredBoxes(deps));
-    // Index right away what we just swept, so the receipt goes out in this same tick.
-    if ((sweeps?.swept ?? 0) + (late?.swept ?? 0) > 0) await step("indexerAfterSweeps", () => deps.indexer());
-    await step("receipts", () => sendReceipts(deps));
-    await step("invoices", () => syncInvoices(deps));
-    await step("monthClose", () => closeMonth(deps));
-    await step("publish", () => publishReviewed(deps));
-    await step("budgetAlerts", () => budgetAlerts(deps));
-    await step("stuckTxs", () => stuckTxs(deps));
-    return { ok: true as const, steps, errors };
-  });
+  for (const coop of ordered) {
+    if (ran > 0 && Date.now() - started > budget) {
+      perCoop.push({ id: coop.id, deferred: true });
+      continue;
+    }
+    const chain =
+      deps.chainFor && coop.treasuryAddress && coop.boxFactoryAddress
+        ? deps.chainFor({
+            treasury: coop.treasuryAddress as Address,
+            boxFactory: coop.boxFactoryAddress as Address,
+          })
+        : deps.chain;
+    const result = await withLock(deps.db, tickLock(coop.id), TICK_LOCK_MS, () =>
+      tickOne({ ...deps, cooperadoraId: coop.id, chain }),
+    );
+    if (result && typeof result === "object" && "skipped" in result) {
+      perCoop.push({ id: coop.id, skipped: true });
+      continue;
+    }
+    ran++;
+    perCoop.push({ id: coop.id, ...(result as TickSummary) });
+    errors.push(...(result as TickSummary).errors.map((e) => (coops.length === 1 ? e : `#${coop.id} ${e}`)));
+    await writeJobCursor(deps.db, "tick", coop.id);
+  }
+
+  if (ran === 0) return { skipped: true };
+  if (coops.length === 1) {
+    const only = perCoop[0] as { steps?: TickSummary["steps"]; errors?: string[] };
+    return { ok: true, steps: only.steps ?? {}, errors };
+  }
+  return { ok: true, steps: { cooperadoras: perCoop }, errors };
+}
+
+async function tickOne(deps: AgentDeps): Promise<TickSummary> {
+  const steps: Record<string, unknown> = {};
+  const errors: string[] = [];
+  const step = async <T>(name: string, fn: () => Promise<T>): Promise<T | undefined> => {
+    try {
+      const r = await fn();
+      steps[name] = r ?? "ok";
+      return r;
+    } catch (e) {
+      console.error(`tick ${name}: ${errorText(e)}`);
+      errors.push(`${name}: ${errorText(e)}`);
+      return undefined;
+    }
+  };
+
+  await step("indexer", () => deps.indexer(deps.cooperadoraId));
+  const sweeps = await step("sweeps", () => sweepBoxes(deps));
+  const late = await step("expiredSweeps", () => sweepExpiredBoxes(deps));
+  // Index right away what we just swept, so the receipt goes out in this same tick.
+  if ((sweeps?.swept ?? 0) + (late?.swept ?? 0) > 0) await step("indexerAfterSweeps", () => deps.indexer(deps.cooperadoraId));
+  await step("receipts", () => sendReceipts(deps));
+  await step("invoices", () => syncInvoices(deps));
+  await step("monthClose", () => closeMonth(deps));
+  await step("publish", () => publishReviewed(deps));
+  await step("budgetAlerts", () => budgetAlerts(deps));
+  await step("stuckTxs", () => stuckTxs(deps));
+  return { ok: true as const, steps, errors };
 }
 
 /**
@@ -71,9 +115,12 @@ export async function sweepBoxes(deps: AgentDeps): Promise<{ checked: number; sw
     .select()
     .from(contributionIntents)
     .where(
-      or(
-        eq(contributionIntents.status, "open"),
-        and(eq(contributionIntents.status, "swept"), gt(contributionIntents.createdAt, recent)),
+      and(
+        deps.cooperadoraId == null ? undefined : eq(contributionIntents.cooperadoraId, deps.cooperadoraId),
+        or(
+          eq(contributionIntents.status, "open"),
+          and(eq(contributionIntents.status, "swept"), gt(contributionIntents.createdAt, recent)),
+        ),
       ),
     )
     .orderBy(contributionIntents.createdAt);
@@ -131,7 +178,7 @@ export const EXPIRED_RESCAN_MS = 90 * DAY_MS;
 export async function sweepExpiredBoxes(deps: AgentDeps): Promise<{ ran: boolean; checked: number; swept: number; busy: number }> {
   const { db } = deps;
   const now = deps.now();
-  const marker = `expired-rescan:${arDate(now)}`;
+  const marker = `expired-rescan:${deps.cooperadoraId ?? "all"}:${arDate(now)}`;
   if (!(await claimNotice(db, AGENT_STATE_CHAT, marker))) return { ran: false, checked: 0, swept: 0, busy: 0 };
   const out = { ran: true, checked: 0, swept: 0, busy: 0 };
   try {
@@ -140,6 +187,7 @@ export async function sweepExpiredBoxes(deps: AgentDeps): Promise<{ ran: boolean
       .from(contributionIntents)
       .where(
         and(
+          deps.cooperadoraId == null ? undefined : eq(contributionIntents.cooperadoraId, deps.cooperadoraId),
           eq(contributionIntents.status, "expired"),
           gt(contributionIntents.createdAt, new Date(now.getTime() - EXPIRED_RESCAN_MS)),
         ),
@@ -167,6 +215,7 @@ export async function sendReceipts(deps: AgentDeps): Promise<{ sent: number }> {
     .from(contributions)
     .where(
       and(
+        deps.cooperadoraId == null ? undefined : eq(contributions.cooperadoraId, deps.cooperadoraId),
         isNotNull(contributions.personId),
         isNull(contributions.receiptSentAt),
         eq(contributions.kind, "dinero"),
@@ -175,7 +224,10 @@ export async function sendReceipts(deps: AgentDeps): Promise<{ sent: number }> {
     )
     .orderBy(contributions.id);
   if (rows.length === 0) return { sent: 0 };
-  const [coop] = await db.select({ chainId: cooperadora.chainId }).from(cooperadora);
+  const [coop] = await db
+    .select({ chainId: cooperadora.chainId })
+    .from(cooperadora)
+    .where(deps.cooperadoraId == null ? undefined : eq(cooperadora.id, deps.cooperadoraId));
 
   let sent = 0;
   for (const c of rows) {
@@ -208,19 +260,26 @@ export async function closeMonth(deps: AgentDeps): Promise<{ period: string; clo
   const { db } = deps;
   const now = deps.now();
   const period = previousPeriod(now);
-  const [coop] = await db.select().from(cooperadora);
+  const [coop] = await db
+    .select()
+    .from(cooperadora)
+    .where(deps.cooperadoraId == null ? undefined : eq(cooperadora.id, deps.cooperadoraId));
   if (!coop || periodRange(period).end <= coop.createdAt) return { period, closed: false, notified: 0 };
 
-  let [row] = await db.select().from(reports).where(eq(reports.period, period));
+  const reportWhere = and(
+    eq(reports.period, period),
+    deps.cooperadoraId == null ? undefined : eq(reports.cooperadoraId, deps.cooperadoraId),
+  );
+  let [row] = await db.select().from(reports).where(reportWhere);
   let closed = false;
   if (!row) {
-    await deps.reports.close(period);
+    await deps.reports.close(period, deps.cooperadoraId);
     closed = true;
-    [row] = await db.select().from(reports).where(eq(reports.period, period));
+    [row] = await db.select().from(reports).where(reportWhere);
   }
   let notified = 0;
   if (row?.status === "borrador") {
-    for (const r of await personsWithRoles(db, [REVIEWER_ROLE])) {
+    for (const r of await personsWithRoles(db, [REVIEWER_ROLE], deps.cooperadoraId)) {
       const sent = await notifyOnce(deps, r.id, `review:${period}`, async () => ({
         text:
           `Ya está el borrador de la rendición de ${periodLabelEs(period)}. ` +
@@ -237,11 +296,19 @@ export async function closeMonth(deps: AgentDeps): Promise<{ period: string; clo
 export async function publishReviewed(deps: AgentDeps): Promise<{ published: string[] }> {
   const { db } = deps;
   const published: string[] = [];
-  for (const row of await db.select().from(reports).where(eq(reports.status, "revisada"))) {
-    const res = await deps.reports.publish(row.period);
+  for (const row of await db
+    .select()
+    .from(reports)
+    .where(
+      and(
+        eq(reports.status, "revisada"),
+        deps.cooperadoraId == null ? undefined : eq(reports.cooperadoraId, deps.cooperadoraId),
+      ),
+    )) {
+    const res = await deps.reports.publish(row.period, deps.cooperadoraId);
     if (!res.ok) throw new Error(`publish ${row.period}: ${res.error}`);
     published.push(row.period);
-    const people = await personsWithRoles(db, [...COMMISSION_ROLES, REVIEWER_ROLE, "asesor"]);
+    const people = await personsWithRoles(db, [...COMMISSION_ROLES, REVIEWER_ROLE, "asesor"], deps.cooperadoraId);
     for (const p of people) {
       await notifyOnce(
         deps,
@@ -260,9 +327,13 @@ export async function budgetAlerts(deps: AgentDeps): Promise<{ alerts: number }>
   const lines = await db
     .select({ lineId: budgetIndex.lineId, allocated: budgetIndex.allocated, spent: budgetIndex.spent, periodEnd: budgetIndex.periodEnd, name: budgetLines.name })
     .from(budgetIndex)
-    .innerJoin(budgetLines, eq(budgetLines.lineId, budgetIndex.lineId));
+    .where(deps.cooperadoraId == null ? undefined : eq(budgetIndex.cooperadoraId, deps.cooperadoraId))
+    .innerJoin(
+      budgetLines,
+      and(eq(budgetLines.lineId, budgetIndex.lineId), eq(budgetLines.cooperadoraId, budgetIndex.cooperadoraId)),
+    );
   let alerts = 0;
-  const commission = await personsWithRoles(db, COMMISSION_ROLES);
+  const commission = await personsWithRoles(db, COMMISSION_ROLES, deps.cooperadoraId);
   for (const l of lines) {
     const allocated = BigInt(l.allocated);
     const spent = BigInt(l.spent);
@@ -288,9 +359,15 @@ export async function stuckTxs(deps: AgentDeps): Promise<{ stuck: number }> {
   const rows = await db
     .select()
     .from(agentTxs)
-    .where(and(eq(agentTxs.status, "sending"), lt(agentTxs.updatedAt, cutoff)));
+    .where(
+      and(
+        deps.cooperadoraId == null ? undefined : eq(agentTxs.cooperadoraId, deps.cooperadoraId),
+        eq(agentTxs.status, "sending"),
+        lt(agentTxs.updatedAt, cutoff),
+      ),
+    );
   if (rows.length === 0) return { stuck: 0 };
-  const operators = await personsWithRoles(db, [OPERATOR_ROLE]);
+  const operators = await personsWithRoles(db, [OPERATOR_ROLE], deps.cooperadoraId);
   for (const r of rows) {
     const text =
       `Atención operador: el envío del agente "${r.key}" lleva más de 10 minutos sin confirmarse` +

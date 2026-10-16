@@ -37,6 +37,10 @@ export interface AuditorDeps {
   notify: Notifier;
   now: () => Date;
   appUrl: string;
+  /** Set while the auditor walks one cooperative. */
+  cooperadoraId?: number;
+  /** Production wiring: a chain port bound to that cooperative's treasury. Tests leave this unset. */
+  chainFor?: (treasury: Address) => AuditorChain;
 }
 
 const MIME_BY_EXT: Record<string, string> = {
@@ -61,21 +65,25 @@ export async function loadStoredFile(url: string): Promise<InvoiceFile> {
 }
 
 /** Module 03 behind the port, signing with the auditor's key. Imported lazily, like the agent's. */
-export function auditorChainPort(): AuditorChain {
+export function auditorChainPort(scope: { db?: Db; treasury?: Address } = {}): AuditorChain {
   return {
     async self() {
       const { auditorAccount } = await import("@/lib/chain/clients");
       return auditorAccount().address;
     },
     async treasuryAuditor() {
-      const [{ publicClient, addressFromEnv }, { treasuryPolicyAbi }] = await Promise.all([
+      const [{ publicClient }, { treasuryPolicyAbi }] = await Promise.all([
         import("@/lib/chain/clients"),
         import("@/lib/chain/abi"),
       ]);
-      return publicClient().readContract({ address: addressFromEnv("TREASURY_ADDRESS"), abi: treasuryPolicyAbi, functionName: "auditor" });
+      const { resolveTreasury } = await import("@/lib/tenant");
+      const treasury = await resolveTreasury(scope.db, scope.treasury);
+      return publicClient().readContract({ address: treasury, abi: treasuryPolicyAbi, functionName: "auditor" });
     },
     treasuryAddress() {
-      return env().TREASURY_ADDRESS as Address;
+      if (scope.treasury) return scope.treasury;
+      if (env().TREASURY_ADDRESS) return env().TREASURY_ADDRESS as Address;
+      throw new Error("treasuryAddress() needs a cooperative treasury or TREASURY_ADDRESS");
     },
     async chainId() {
       const { publicClient } = await import("@/lib/chain/clients");
@@ -83,32 +91,36 @@ export function auditorChainPort(): AuditorChain {
     },
     async payment(id) {
       const { getPayment } = await import("@/lib/chain/treasury");
-      return getPayment(id);
+      return getPayment(id, scope);
     },
     async paymentCount() {
-      const [{ publicClient, addressFromEnv }, { treasuryPolicyAbi }] = await Promise.all([
+      const [{ publicClient }, { treasuryPolicyAbi }] = await Promise.all([
         import("@/lib/chain/clients"),
         import("@/lib/chain/abi"),
       ]);
-      return publicClient().readContract({ address: addressFromEnv("TREASURY_ADDRESS"), abi: treasuryPolicyAbi, functionName: "paymentCount" });
+      const { resolveTreasury } = await import("@/lib/tenant");
+      const treasury = await resolveTreasury(scope.db, scope.treasury);
+      return publicClient().readContract({ address: treasury, abi: treasuryPolicyAbi, functionName: "paymentCount" });
     },
     async paymentAudit(id) {
       const { getPaymentAudit } = await import("@/lib/chain/treasury");
-      return getPaymentAudit(id);
+      return getPaymentAudit(id, scope);
     },
     async perTxCap() {
-      const [{ publicClient, addressFromEnv }, { treasuryPolicyAbi }] = await Promise.all([
+      const [{ publicClient }, { treasuryPolicyAbi }] = await Promise.all([
         import("@/lib/chain/clients"),
         import("@/lib/chain/abi"),
       ]);
-      return publicClient().readContract({ address: addressFromEnv("TREASURY_ADDRESS"), abi: treasuryPolicyAbi, functionName: "perTxCap" });
+      const { resolveTreasury } = await import("@/lib/tenant");
+      const treasury = await resolveTreasury(scope.db, scope.treasury);
+      return publicClient().readContract({ address: treasury, abi: treasuryPolicyAbi, functionName: "perTxCap" });
     },
     async auditPayment(args, db) {
       const { auditPayment } = await import("@/lib/chain/auditor");
-      return auditPayment(args, { db });
+      return auditPayment(args, { db, treasury: scope.treasury });
     },
     async treasuryBalanceAt(block) {
-      const [{ publicClient, addressFromEnv }, { warsAddress }] = await Promise.all([
+      const [{ publicClient }, { warsAddress }] = await Promise.all([
         import("@/lib/chain/clients"),
         import("@/lib/chain/treasury"),
       ]);
@@ -117,7 +129,7 @@ export function auditorChainPort(): AuditorChain {
         address: await warsAddress(),
         abi: erc20Abi,
         functionName: "balanceOf",
-        args: [addressFromEnv("TREASURY_ADDRESS")],
+        args: [scope.treasury ?? (await (await import("@/lib/tenant")).resolveTreasury(scope.db))],
         blockNumber: block,
       });
     },
@@ -126,7 +138,8 @@ export function auditorChainPort(): AuditorChain {
 
 export function defaultAuditorDeps(args: { db: Db; notify: Notifier } & Partial<AuditorDeps>): AuditorDeps {
   return {
-    chain: auditorChainPort(),
+    chain: auditorChainPort({ db: args.db }),
+    chainFor: (treasury) => auditorChainPort({ db: args.db, treasury }),
     loadFile: loadStoredFile,
     readQr: async (file) => (await import("@/lib/invoice")).readArcaQr(file),
     now: () => new Date(),

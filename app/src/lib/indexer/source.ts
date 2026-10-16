@@ -1,8 +1,11 @@
 // Where the indexer reads from. The default reads Celo through viem; tests pass fake logs.
 import { getAbiItem, erc20Abi, type Address, type Hex } from "viem";
+import type { Db } from "@/db";
 import { treasuryPolicyAbi } from "@/lib/chain/abi";
-import { addressFromEnv, publicClient } from "@/lib/chain/clients";
+import { publicClient } from "@/lib/chain/clients";
+import type { ChainScope } from "@/lib/chain/treasury";
 import { warsAddress } from "@/lib/chain/treasury";
+import { resolveBoxFactory, resolveTreasury } from "@/lib/tenant";
 
 export type RawLog = {
   address: Address;
@@ -29,14 +32,14 @@ export interface IndexerSource {
 
 const transferEvent = getAbiItem({ abi: erc20Abi, name: "Transfer" });
 
-/** Reads Celo with publicClient() and the addresses from env. */
-export function chainSource(): IndexerSource {
+/** Reads Celo with publicClient(). Addresses come from `scope`, else the only active row, else env. */
+export function chainSource(scope: ChainScope & { db?: Db } = {}): IndexerSource {
   let cached: IndexerAddresses | undefined;
   const addresses = async () =>
     (cached ??= {
-      treasury: addressFromEnv("TREASURY_ADDRESS"),
-      boxFactory: addressFromEnv("BOX_FACTORY_ADDRESS"),
-      wars: await warsAddress(),
+      treasury: await resolveTreasury(scope.db, scope.treasury),
+      boxFactory: await resolveBoxFactory(scope.db, scope.boxFactory),
+      wars: await warsAddress(scope),
     });
 
   const toRaw = (l: {

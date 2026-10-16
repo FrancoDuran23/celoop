@@ -8,7 +8,7 @@ import { chainReader, treasuryAddress } from "@/lib/wallet/server";
 export async function saveProposalMeta(input: ProposalMetaInput): Promise<ReasonResult> {
   try {
     const db = getDb();
-    const result = await recordProposal(input, { db, chain: chainReader, treasury: treasuryAddress() });
+    const result = await recordProposal(input, { db, chain: chainReader, treasury: await treasuryAddress() });
     // With a threshold of 1 the proposal already executed.
     if (result.ok) await applyExecutedProposal(db, chainReader, BigInt(result.proposalId));
     return result;

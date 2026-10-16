@@ -1,7 +1,7 @@
 import { getAddress } from "viem";
 import { expect, test } from "vitest";
 import { proposals, vendors } from "@/db/schema";
-import { createTestDb } from "@/db/testing";
+import { createTestDb, ensureCooperadora } from "@/db/testing";
 import { encodeSetVendor } from "./proposals";
 import { syncExecutedVendors } from "./vendor-sync";
 
@@ -10,6 +10,7 @@ const SET_VENDOR = 2; // ProposalKind.SetVendor
 
 test("an executed SetVendor proposal creates the vendor row once", async () => {
   const db = await createTestDb();
+  await ensureCooperadora(db);
   const data = encodeSetVendor({ vendor: VENDOR, cuit: BigInt("20123456786"), enabled: true });
   await db.insert(proposals).values({
     proposalId: BigInt(1),

@@ -151,7 +151,10 @@ export async function loadBudgetLines(db: Db): Promise<LineOption[]> {
   const rows = await db
     .select({ lineId: budgetLines.lineId, name: budgetLines.name, allocated: budgetIndex.allocated, spent: budgetIndex.spent })
     .from(budgetLines)
-    .leftJoin(budgetIndex, eq(budgetIndex.lineId, budgetLines.lineId))
+    .leftJoin(
+      budgetIndex,
+      and(eq(budgetIndex.lineId, budgetLines.lineId), eq(budgetIndex.cooperadoraId, budgetLines.cooperadoraId)),
+    )
     .orderBy(budgetLines.name);
   return rows.map((r) => ({
     lineId: r.lineId as Hex,

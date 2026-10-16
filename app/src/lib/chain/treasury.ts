@@ -1,8 +1,12 @@
 // Typed reads of the treasury, the box factory and wARS.
 import { erc20Abi, type Address, type Hex } from "viem";
+import type { Db } from "@/db";
 import { env } from "@/lib/env";
+import { resolveBoxFactory, resolveTreasury } from "@/lib/tenant";
 import { boxFactoryAbi, treasuryPolicyAbi } from "./abi";
-import { addressFromEnv, publicClient } from "./clients";
+import { publicClient } from "./clients";
+
+export type ChainScope = { treasury?: Address; boxFactory?: Address; db?: Db };
 
 export type BudgetState = { lineId: Hex; allocated: bigint; spent: bigint; periodEnd: bigint };
 
@@ -32,34 +36,36 @@ export type OnchainPayment = {
   approvals: bigint;
 };
 
-const treasury = () => ({ address: addressFromEnv("TREASURY_ADDRESS"), abi: treasuryPolicyAbi });
-
-/** wARS address: WARS_ADDRESS if set, otherwise the treasury's token(). */
-export async function warsAddress(): Promise<Address> {
-  const fromEnv = env().WARS_ADDRESS;
-  if (fromEnv) return fromEnv as Address;
-  return publicClient().readContract({ ...treasury(), functionName: "token" });
+async function treasuryAt(scope?: ChainScope) {
+  return { address: await resolveTreasury(scope?.db, scope?.treasury), abi: treasuryPolicyAbi };
 }
 
-export async function warsBalanceOf(address: Address): Promise<bigint> {
+/** wARS address: WARS_ADDRESS if set, otherwise the treasury's token(). */
+export async function warsAddress(scope?: ChainScope): Promise<Address> {
+  const fromEnv = env().WARS_ADDRESS;
+  if (fromEnv) return fromEnv as Address;
+  return publicClient().readContract({ ...(await treasuryAt(scope)), functionName: "token" });
+}
+
+export async function warsBalanceOf(address: Address, scope?: ChainScope): Promise<bigint> {
   return publicClient().readContract({
-    address: await warsAddress(),
+    address: await warsAddress(scope),
     abi: erc20Abi,
     functionName: "balanceOf",
     args: [address],
   });
 }
 
-export async function getBudget(lineId: Hex): Promise<BudgetState & { exists: boolean }> {
-  const b = await publicClient().readContract({ ...treasury(), functionName: "budget", args: [lineId] });
+export async function getBudget(lineId: Hex, scope?: ChainScope): Promise<BudgetState & { exists: boolean }> {
+  const b = await publicClient().readContract({ ...(await treasuryAt(scope)), functionName: "budget", args: [lineId] });
   return { lineId, allocated: b.allocated, spent: b.spent, periodEnd: BigInt(b.periodEnd), exists: b.exists };
 }
 
-export async function getTreasuryState(): Promise<TreasuryState> {
+export async function getTreasuryState(scope?: ChainScope): Promise<TreasuryState> {
   const client = publicClient();
-  const t = treasury();
+  const t = await treasuryAt(scope);
   const [balance, paused, perTxCap, vendorMonthlyCap, signers, threshold, agent, auditor, lineIds] = await Promise.all([
-    warsBalanceOf(t.address),
+    warsBalanceOf(t.address, scope),
     client.readContract({ ...t, functionName: "paused" }),
     client.readContract({ ...t, functionName: "perTxCap" }),
     client.readContract({ ...t, functionName: "vendorMonthlyCap" }),
@@ -71,15 +77,15 @@ export async function getTreasuryState(): Promise<TreasuryState> {
   ]);
   const budgets = await Promise.all(
     lineIds.map(async (lineId) => {
-      const { allocated, spent, periodEnd } = await getBudget(lineId);
+      const { allocated, spent, periodEnd } = await getBudget(lineId, scope);
       return { lineId, allocated, spent, periodEnd };
     }),
   );
   return { balance, paused, perTxCap, vendorMonthlyCap, signers: [...signers], threshold, agent, auditor, budgets };
 }
 
-export async function getPayment(id: bigint): Promise<OnchainPayment> {
-  const p = await publicClient().readContract({ ...treasury(), functionName: "payment", args: [id] });
+export async function getPayment(id: bigint, scope?: ChainScope): Promise<OnchainPayment> {
+  const p = await publicClient().readContract({ ...(await treasuryAt(scope)), functionName: "payment", args: [id] });
   return {
     vendor: p.vendor,
     amount: p.amount,
@@ -95,23 +101,23 @@ export const AUDIT_STATUS = ["none", "cleared", "flagged"] as const;
 export type AuditStatus = (typeof AUDIT_STATUS)[number];
 
 /** The auditor's verdict on a payment, straight from the contract. */
-export async function getPaymentAudit(id: bigint): Promise<{ status: AuditStatus; reportHash: Hex }> {
-  const [status, reportHash] = await publicClient().readContract({ ...treasury(), functionName: "paymentAudit", args: [id] });
+export async function getPaymentAudit(id: bigint, scope?: ChainScope): Promise<{ status: AuditStatus; reportHash: Hex }> {
+  const [status, reportHash] = await publicClient().readContract({ ...(await treasuryAt(scope)), functionName: "paymentAudit", args: [id] });
   return { status: AUDIT_STATUS[status] ?? "none", reportHash };
 }
 
-export async function isInvoicePaid(invoiceId: Hex): Promise<boolean> {
-  return publicClient().readContract({ ...treasury(), functionName: "invoicePaid", args: [invoiceId] });
+export async function isInvoicePaid(invoiceId: Hex, scope?: ChainScope): Promise<boolean> {
+  return publicClient().readContract({ ...(await treasuryAt(scope)), functionName: "invoicePaid", args: [invoiceId] });
 }
 
-export async function vendorSpentThisPeriod(vendor: Address): Promise<bigint> {
-  return publicClient().readContract({ ...treasury(), functionName: "vendorSpentThisPeriod", args: [vendor] });
+export async function vendorSpentThisPeriod(vendor: Address, scope?: ChainScope): Promise<bigint> {
+  return publicClient().readContract({ ...(await treasuryAt(scope)), functionName: "vendorSpentThisPeriod", args: [vendor] });
 }
 
 /** CREATE2 address of the deposit box for `ref`, deployed or not. */
-export async function boxAddress(ref: Hex): Promise<Address> {
+export async function boxAddress(ref: Hex, scope?: ChainScope): Promise<Address> {
   return publicClient().readContract({
-    address: addressFromEnv("BOX_FACTORY_ADDRESS"),
+    address: await resolveBoxFactory(scope?.db, scope?.boxFactory),
     abi: boxFactoryAbi,
     functionName: "boxAddress",
     args: [ref],

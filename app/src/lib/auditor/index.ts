@@ -13,6 +13,7 @@ import { and, desc, eq, inArray, isNull, lt, ne, sql } from "drizzle-orm";
 import { isAddressEqual, keccak256, zeroAddress, type Address, type Hex } from "viem";
 import { audits, chainEvents, contributions, cooperadora, indexerCursor, invoices, payments, vendors } from "@/db/schema";
 import { withLock } from "@/lib/locks";
+import { activeCooperadoras, auditorLock, readJobCursor, rotateAfter, scopedKey, writeJobCursor, type CoopRow } from "@/lib/tenant";
 import { claimNotice, releaseNotice } from "@/lib/orchestrator/chat-state";
 import { notifyOnce } from "@/lib/orchestrator/deps";
 import { arDate, errorText, formatPesos, invoiceLabel } from "@/lib/orchestrator/format";
@@ -46,9 +47,53 @@ export type AuditorSummary =
   | { ok: true; audited: AuditResult[]; retry: number; reconcile: ReconcileResult }
   | { ok: true; skipped: string };
 
+const AUDITOR_BUDGET_MS = 240_000;
+
+function forCooperadora(deps: AuditorDeps, coop: CoopRow): AuditorDeps {
+  const treasury = coop.treasuryAddress as Address | null;
+  const chain = treasury && deps.chainFor ? deps.chainFor(treasury) : deps.chain;
+  return { ...deps, cooperadoraId: coop.id, chain };
+}
+
 export async function runAuditor(deps: AuditorDeps): Promise<AuditorSummary | { skipped: true }> {
-  return withLock(deps.db, AUDITOR_LOCK, AUDITOR_LOCK_MS, async () => {
-    const self = await deps.chain.self();
+  const coops = await activeCooperadoras(deps.db);
+  if (coops.length <= 1) {
+    const coop = coops[0];
+    const scoped = coop ? forCooperadora(deps, coop) : deps;
+    return withLock(deps.db, coop ? auditorLock(coop.id) : AUDITOR_LOCK, AUDITOR_LOCK_MS, () => auditCooperadora(scoped));
+  }
+
+  const started = Date.now();
+  const ordered = rotateAfter(coops, await readJobCursor(deps.db, "auditor"));
+  const audited: AuditResult[] = [];
+  let retry = 0;
+  let reconcile: ReconcileResult = { ran: false };
+  let ran = 0;
+  let skipped = 0;
+  for (const coop of ordered) {
+    if (ran > 0 && Date.now() - started > AUDITOR_BUDGET_MS) break;
+    const result = await withLock(deps.db, auditorLock(coop.id), AUDITOR_LOCK_MS, () =>
+      auditCooperadora(forCooperadora(deps, coop)),
+    );
+    if (result && typeof result === "object" && "skipped" in result && !("ok" in result)) {
+      skipped++;
+      continue;
+    }
+    ran++;
+    const summary = result as AuditorSummary;
+    if ("audited" in summary) {
+      audited.push(...summary.audited);
+      retry += summary.retry;
+      reconcile = summary.reconcile;
+    }
+    await writeJobCursor(deps.db, "auditor", coop.id);
+  }
+  if (ran === 0) return skipped > 0 ? { skipped: true } : { ok: true, skipped: "no hay cooperadoras activas" };
+  return { ok: true, audited, retry, reconcile };
+}
+
+async function auditCooperadora(deps: AuditorDeps): Promise<AuditorSummary> {
+  const self = await deps.chain.self();
     const trusted = await deps.chain.treasuryAuditor();
     if (isAddressEqual(trusted, zeroAddress)) return { ok: true as const, skipped: "el tesoro no tiene auditor" };
     if (!isAddressEqual(trusted, self)) {
@@ -77,7 +122,6 @@ export async function runAuditor(deps: AuditorDeps): Promise<AuditorSummary | { 
       return { ran: false, error: errorText(e) };
     });
     return { ok: true as const, audited, retry, reconcile };
-  });
 }
 
 type AuditRow = typeof audits.$inferSelect;
@@ -90,9 +134,18 @@ async function candidates(deps: AuditorDeps): Promise<bigint[]> {
   const indexed = await deps.db
     .select({ paymentId: payments.paymentId })
     .from(payments)
-    .where(and(eq(payments.status, "pending"), isNull(payments.audit)))
+    .where(
+      and(
+        eq(payments.status, "pending"),
+        isNull(payments.audit),
+        deps.cooperadoraId == null ? undefined : eq(payments.cooperadoraId, deps.cooperadoraId),
+      ),
+    )
     .orderBy(payments.paymentId);
-  const [{ max }] = await deps.db.select({ max: sql<string | null>`max(${payments.paymentId})::text` }).from(payments);
+  const [{ max }] = await deps.db
+    .select({ max: sql<string | null>`max(${payments.paymentId})::text` })
+    .from(payments)
+    .where(deps.cooperadoraId == null ? undefined : eq(payments.cooperadoraId, deps.cooperadoraId));
   const ids = new Set(indexed.map((r) => r.paymentId));
   const count = await deps.chain.paymentCount();
   for (let id = BigInt(max ?? "0") + BigInt(1); id <= count; id++) ids.add(id);
@@ -106,12 +159,16 @@ async function auditOne(deps: AuditorDeps, paymentId: bigint, self: Address): Pr
   if (onchain.status !== "pending") return null;
   if ((await deps.chain.paymentAudit(paymentId)).status !== "none") return null;
 
-  let [row] = await db.select().from(audits).where(eq(audits.paymentId, paymentId));
+  const auditWhere = and(
+    eq(audits.paymentId, paymentId),
+    deps.cooperadoraId == null ? undefined : eq(audits.cooperadoraId, deps.cooperadoraId),
+  );
+  let [row] = await db.select().from(audits).where(auditWhere);
   if (!row) {
     const built = await review(deps, paymentId, onchain, self);
     if (built === "retry") return "retry";
-    await db.insert(audits).values(built).onConflictDoNothing();
-    [row] = await db.select().from(audits).where(eq(audits.paymentId, paymentId));
+    await db.insert(audits).values({ ...built, ...(deps.cooperadoraId == null ? {} : { cooperadoraId: deps.cooperadoraId }) }).onConflictDoNothing();
+    [row] = await db.select().from(audits).where(auditWhere);
   }
   const cleared = row.verdict === "cleared";
 
@@ -120,7 +177,7 @@ async function auditOne(deps: AuditorDeps, paymentId: bigint, self: Address): Pr
   try {
     const res = await withLock(db, AUDITOR_TX_LOCK, AUDITOR_TX_LOCK_MS, () =>
       deps.chain.auditPayment(
-        { key: `audit:payment:${paymentId}`, paymentId, cleared, reportHash: row.reportHash as Hex },
+        { key: scopedKey(deps.cooperadoraId, `audit:payment:${paymentId}`), paymentId, cleared, reportHash: row.reportHash as Hex },
         db,
       ),
     );
@@ -146,13 +203,21 @@ async function review(
   self: Address,
 ): Promise<Omit<AuditRow, "createdAt"> | "retry"> {
   const { db } = deps;
-  const [coop] = await db.select().from(cooperadora);
+  const [coop] = await db
+    .select()
+    .from(cooperadora)
+    .where(deps.cooperadoraId == null ? undefined : eq(cooperadora.id, deps.cooperadoraId));
   if (!coop) throw new Error("cooperadora is not configured");
 
   const [inv] = await db
     .select()
     .from(invoices)
-    .where(sql`lower(${invoices.invoiceId}) = ${onchain.invoiceId.toLowerCase()}`);
+    .where(
+      and(
+        sql`lower(${invoices.invoiceId}) = ${onchain.invoiceId.toLowerCase()}`,
+        deps.cooperadoraId == null ? undefined : eq(invoices.cooperadoraId, deps.cooperadoraId),
+      ),
+    );
   let storedFileHash: Hex | null = null;
   let qr = null;
   if (inv) {
@@ -188,6 +253,7 @@ async function review(
     checkedAt: deps.now(),
   });
   return {
+    cooperadoraId: deps.cooperadoraId ?? 1,
     paymentId,
     verdict: isFlagged(findings) ? "flagged" : "cleared",
     findings,
@@ -206,6 +272,7 @@ async function vendorHistory(deps: AuditorDeps, vendor: Address, before: bigint)
         sql`lower(${payments.vendor}) = ${vendor.toLowerCase()}`,
         lt(payments.paymentId, before),
         ne(payments.status, "rejected"),
+        deps.cooperadoraId == null ? undefined : eq(payments.cooperadoraId, deps.cooperadoraId),
       ),
     )
     .orderBy(desc(payments.paymentId));
@@ -247,15 +314,15 @@ async function tellReviewers(deps: AuditorDeps, row: AuditRow, onchain: Onchain)
   const text =
     `Auditor: revisé ${await describePayment(deps, row.paymentId, onchain)} y no lo dejé salir automático.\n` +
     findings.map((f) => `• ${f.text}`).join("\n") +
-    `\nAhora lo tienen que firmar o rechazar los firmantes. Informe: ${urls.audit(deps.appUrl, row.paymentId)}`;
-  for (const r of await personsWithRoles(deps.db, [REVIEWER_ROLE])) {
+    `\nAhora lo tienen que firmar o rechazar los firmantes. Informe: ${urls.audit(deps.appUrl, row.paymentId, deps.cooperadoraId)}`;
+  for (const r of await personsWithRoles(deps.db, [REVIEWER_ROLE], deps.cooperadoraId)) {
     await notifyOnce(deps, r.id, `audit-flag:${row.paymentId}`, text);
   }
 }
 
 async function alertOperators(deps: AuditorDeps, key: string, text: string) {
   console.error(text);
-  for (const op of await personsWithRoles(deps.db, [OPERATOR_ROLE])) await notifyOnce(deps, op.id, key, text);
+  for (const op of await personsWithRoles(deps.db, [OPERATOR_ROLE], deps.cooperadoraId)) await notifyOnce(deps, op.id, key, text);
 }
 
 export type ReconcileResult =
@@ -269,11 +336,21 @@ export type ReconcileResult =
  */
 export async function reconcileBalance(deps: AuditorDeps): Promise<ReconcileResult> {
   const { db } = deps;
-  const marker = `auditor:reconcile:${arDate(deps.now())}`;
+  const marker = `auditor:reconcile:${deps.cooperadoraId ?? "all"}:${arDate(deps.now())}`;
   if (!(await claimNotice(db, STATE_CHAT, marker))) return { ran: false };
   try {
     const cursor = async () =>
-      (await db.select().from(indexerCursor).where(eq(indexerCursor.key, "treasury")))[0]?.blockNumber ?? null;
+      (
+        await db
+          .select()
+          .from(indexerCursor)
+          .where(
+            and(
+              eq(indexerCursor.key, "treasury"),
+              deps.cooperadoraId == null ? undefined : eq(indexerCursor.cooperadoraId, deps.cooperadoraId),
+            ),
+          )
+      )[0]?.blockNumber ?? null;
     const block = await cursor();
     if (block === null) {
       await releaseNotice(db, STATE_CHAT, marker);
@@ -282,11 +359,18 @@ export async function reconcileBalance(deps: AuditorDeps): Promise<ReconcileResu
     const [{ income }] = await db
       .select({ income: sql<string>`coalesce(sum(${contributions.amount}), 0)::text` })
       .from(contributions)
-      .where(and(eq(contributions.kind, "dinero"), sql`${contributions.txHash} is not null`, sql`${contributions.blockNumber} <= ${block}`));
+      .where(
+        and(
+          eq(contributions.kind, "dinero"),
+          sql`${contributions.txHash} is not null`,
+          sql`${contributions.blockNumber} <= ${block}`,
+          deps.cooperadoraId == null ? undefined : eq(contributions.cooperadoraId, deps.cooperadoraId),
+        ),
+      );
     const [{ paid }] = await db
       .select({ paid: sql<string>`coalesce(sum(${payments.amount}), 0)::text` })
       .from(payments)
-      .where(eq(payments.status, "executed"));
+      .where(and(eq(payments.status, "executed"), deps.cooperadoraId == null ? undefined : eq(payments.cooperadoraId, deps.cooperadoraId)));
     if ((await cursor()) !== block) {
       await releaseNotice(db, STATE_CHAT, marker);
       return { ran: false };
@@ -299,7 +383,7 @@ export async function reconcileBalance(deps: AuditorDeps): Promise<ReconcileResu
       const text =
         `Auditor: el saldo del tesoro no cierra. En la cadena hay ${formatPesos(onchain)} y, según los aportes y pagos registrados, ` +
         `tendría que haber ${formatPesos(recorded)} (diferencia de ${formatPesos(diff)}). Hay que revisarlo antes de la próxima rendición.`;
-      for (const p of await personsWithRoles(db, [REVIEWER_ROLE, OPERATOR_ROLE])) {
+      for (const p of await personsWithRoles(db, [REVIEWER_ROLE, OPERATOR_ROLE], deps.cooperadoraId)) {
         await notifyOnce(deps, p.id, `reconcile:${arDate(deps.now())}`, text);
       }
     }

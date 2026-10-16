@@ -46,8 +46,9 @@ export const urls = {
   vendor: (appUrl: string, token: string) => `${base(appUrl)}/proveedor?t=${q(token)}`,
   report: (appUrl: string, period: string, token?: string) =>
     `${base(appUrl)}/rendicion/${period}${token ? `?token=${q(token)}` : ""}`,
-  /** The auditor's public report on a payment. */
-  audit: (appUrl: string, paymentId: bigint | string) => `${base(appUrl)}/auditoria/${paymentId}`,
+  /** The auditor's public report on a payment. `c` picks the cooperative when ids overlap. */
+  audit: (appUrl: string, paymentId: bigint | string, cooperadoraId?: number) =>
+    `${base(appUrl)}/auditoria/${paymentId}${cooperadoraId != null ? `?c=${cooperadoraId}` : ""}`,
 };
 
 /** Link for a signer to approve or reject a pending payment. Single use, 24 hours. */

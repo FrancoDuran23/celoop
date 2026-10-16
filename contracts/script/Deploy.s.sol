@@ -6,6 +6,7 @@ import {console} from "forge-std/console.sol";
 
 import {TreasuryPolicy} from "../src/TreasuryPolicy.sol";
 import {BoxFactory} from "../src/BoxFactory.sol";
+import {CooperadoraFactory} from "../src/CooperadoraFactory.sol";
 import {MockWARS} from "../src/test/MockWARS.sol";
 
 /// @notice Real deployment (local anvil, Celo Sepolia or Celo mainnet): TreasuryPolicy and
@@ -32,7 +33,7 @@ import {MockWARS} from "../src/test/MockWARS.sol";
 ///   DEPLOYER_PRIVATE_KEY  broadcaster key; unset = forge's --private-key/--account/--ledger
 ///
 /// Prints one JSON line:
-///   {"chainId":..,"token":"0x..","treasury":"0x..","boxFactory":"0x..","mockToken":bool}
+///   {"chainId":..,"token":"0x..","factory":"0x..","onchainId":..,"treasury":"0x..","boxFactory":"0x..","mockToken":bool}
 contract Deploy is Script {
     address public constant MAINNET_WARS = 0x0DC4F92879B7670e5f4e4e6e3c801D229129D90D;
     uint256 public constant CELO_MAINNET = 42220;
@@ -52,6 +53,8 @@ contract Deploy is Script {
 
     struct Deployment {
         address token;
+        address factory;
+        uint256 onchainId;
         address treasury;
         address boxFactory;
         bool mockToken;
@@ -68,6 +71,8 @@ contract Deploy is Script {
         string memory obj = "deployment";
         vm.serializeUint(obj, "chainId", block.chainid);
         vm.serializeAddress(obj, "token", d.token);
+        vm.serializeAddress(obj, "factory", d.factory);
+        vm.serializeUint(obj, "onchainId", d.onchainId);
         vm.serializeAddress(obj, "treasury", d.treasury);
         vm.serializeBool(obj, "mockToken", d.mockToken);
         string memory json = vm.serializeAddress(obj, "boxFactory", d.boxFactory);
@@ -102,14 +107,21 @@ contract Deploy is Script {
             d.token = _create(type(MockWARS).creationCode, "", c.suffix);
             d.mockToken = true;
         }
-        d.treasury = _create(
-            type(TreasuryPolicy).creationCode,
-            abi.encode(
-                d.token, c.signers, c.threshold, c.agent, c.perTxCap, c.vendorMonthlyCap, c.configHash, c.auditor
+        // The factory is the platform contract. The demo cooperative is its first create(), so the
+        // treasury and the box factory are born inside that one transaction (still attributed).
+        d.factory = _create(
+            type(CooperadoraFactory).creationCode, abi.encode(d.token, c.agent, c.auditor), c.suffix
+        );
+        bytes memory payload = bytes.concat(
+            abi.encodeCall(
+                CooperadoraFactory.create,
+                (c.signers, c.threshold, c.perTxCap, c.vendorMonthlyCap, c.configHash)
             ),
             c.suffix
         );
-        d.boxFactory = _create(type(BoxFactory).creationCode, abi.encode(d.treasury, d.token), c.suffix);
+        (bool ok, bytes memory ret) = d.factory.call(payload);
+        require(ok, "Deploy: factory create failed");
+        (d.onchainId, d.treasury, d.boxFactory) = abi.decode(ret, (uint256, address, address));
     }
 
     function _create(bytes memory creationCode, bytes memory args, bytes memory suffix) internal returns (address addr) {

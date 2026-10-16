@@ -62,6 +62,26 @@ export async function releaseNotice(db: Db, chatId: bigint, key: string): Promis
     .where(eq(chatState.chatId, chatId));
 }
 
+export async function getSelectedCooperadora(db: Db, chatId: bigint): Promise<number | null> {
+  const [row] = await db.select({ state: chatState.state }).from(chatState).where(eq(chatState.chatId, chatId));
+  const id = (row?.state as { cooperadoraId?: unknown } | undefined)?.cooperadoraId;
+  return typeof id === "number" && Number.isInteger(id) ? id : null;
+}
+
+export async function setSelectedCooperadora(db: Db, chatId: bigint, cooperadoraId: number): Promise<void> {
+  const value = JSON.stringify(cooperadoraId);
+  await db
+    .insert(chatState)
+    .values({ chatId, state: { cooperadoraId }, updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: chatState.chatId,
+      set: {
+        state: sql`jsonb_set(${chatState.state}, '{cooperadoraId}', ${value}::jsonb)`,
+        updatedAt: new Date(),
+      },
+    });
+}
+
 /** Chat id of a person, or null if they never opened the bot. */
 export async function chatIdOf(db: Db, personId: number): Promise<bigint | null> {
   const [p] = await db.select({ chatId: persons.telegramChatId }).from(persons).where(eq(persons.id, personId));
