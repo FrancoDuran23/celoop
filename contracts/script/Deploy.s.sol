@@ -8,6 +8,7 @@ import {TreasuryPolicy} from "../src/TreasuryPolicy.sol";
 import {BoxFactory} from "../src/BoxFactory.sol";
 import {CooperadoraFactory} from "../src/CooperadoraFactory.sol";
 import {MockWARS} from "../src/test/MockWARS.sol";
+import {Attribution} from "./Attribution.sol";
 
 /// @notice Real deployment (local anvil, Celo Sepolia or Celo mainnet): TreasuryPolicy and
 /// BoxFactory, plus MockWARS off mainnet when no token is given. Driven by app/scripts/setup.ts,
@@ -104,12 +105,12 @@ contract Deploy is Script {
 
         d.token = c.token;
         if (d.token == address(0)) {
-            d.token = _create(type(MockWARS).creationCode, "", c.suffix);
+            d.token = Attribution.create(type(MockWARS).creationCode, "", c.suffix);
             d.mockToken = true;
         }
         // The factory is the platform contract. The demo cooperative is its first create(), so the
         // treasury and the box factory are born inside that one transaction (still attributed).
-        d.factory = _create(
+        d.factory = Attribution.create(
             type(CooperadoraFactory).creationCode, abi.encode(d.token, c.agent, c.auditor), c.suffix
         );
         bytes memory payload = bytes.concat(
@@ -124,11 +125,4 @@ contract Deploy is Script {
         (d.onchainId, d.treasury, d.boxFactory) = abi.decode(ret, (uint256, address, address));
     }
 
-    function _create(bytes memory creationCode, bytes memory args, bytes memory suffix) internal returns (address addr) {
-        bytes memory initCode = bytes.concat(creationCode, args, suffix);
-        assembly ("memory-safe") {
-            addr := create(0, add(initCode, 0x20), mload(initCode))
-        }
-        require(addr != address(0) && addr.code.length > 0, "Deploy: contract creation failed");
-    }
 }

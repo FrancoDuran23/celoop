@@ -15,6 +15,7 @@ import {
   getUserOperationHash,
   toPackedUserOperation,
 } from "viem/account-abstraction";
+import { tagClient } from "@/lib/chain/attribution";
 import type { Forward, JsonRpcRequest } from "../bundler";
 import { ENTRY_POINT } from "../constants";
 
@@ -38,7 +39,12 @@ export async function waitMined(client: PublicClient, hash: Hex, timeoutMs = 60_
 }
 
 export function localBundler(opts: { rpcUrl: string; chain: Chain; publicClient: PublicClient; bundlerKey: Hex }) {
-  const wallet = createWalletClient({ account: privateKeyToAccount(opts.bundlerKey), chain: opts.chain, transport: http(opts.rpcUrl) });
+  // The outer handleOps is a transaction we send in tests (Pimlico sends it in production, and we
+  // cannot suffix that one). writeContract's dataSuffix tags it. The tag that indexers credit for
+  // a bundle is still the one on the UserOperation callData; this outer suffix is extra.
+  const wallet = tagClient(
+    createWalletClient({ account: privateKeyToAccount(opts.bundlerKey), chain: opts.chain, transport: http(opts.rpcUrl) }),
+  );
   const sent = new Map<Hex, Hex>();
   const handled: { userOpHash: Hex; txHash: Hex; callData: Hex }[] = [];
 

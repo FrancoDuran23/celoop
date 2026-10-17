@@ -16,6 +16,7 @@ import { publicClient } from "@/lib/chain/clients";
 import { buildPlan, endOfArDay, loadConfig } from "../scripts/lib/config";
 import { checkNode, safetyCut } from "../scripts/lib/guard";
 import { registerAgent } from "../scripts/lib/register-agent";
+import { updateAgentUri } from "../scripts/lib/update-agent-uri";
 import { runSetup } from "../scripts/lib/setup";
 import { setTelegramWebhook, webhookUrl } from "../scripts/lib/telegram-webhook";
 
@@ -101,6 +102,22 @@ describe("safety cut", () => {
       expect(
         (await registerAgent({ env: env({ CHAIN: "mainnet", ATTRIBUTION_CODE: "code" }), log: quiet })).status,
       ).toBe("needs-confirmation");
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    test("update-agent-uri has the same cut and does not touch the node without an id", async () => {
+      expect((await updateAgentUri({ env: env({ CHAIN: "mainnet" }), log: quiet, yes: true })).status).toBe("refused");
+      expect(
+        (await updateAgentUri({ env: env({ CHAIN: "mainnet", ATTRIBUTION_CODE: "celo_97a761e4eeab" }), log: quiet })).status,
+      ).toBe("needs-confirmation");
+      await expect(
+        updateAgentUri({
+          env: env({ CHAIN: "mainnet", ATTRIBUTION_CODE: "celo_97a761e4eeab", AGENT_ID: undefined }),
+          log: quiet,
+          yes: true,
+          dryRun: true,
+        }),
+      ).rejects.toThrow(/AGENT_ID/);
       expect(fetchSpy).not.toHaveBeenCalled();
     });
   });
