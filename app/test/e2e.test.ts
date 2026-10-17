@@ -394,7 +394,7 @@ describe.skipIf(skipReason !== null)("e2e: the demo flows on a fork of Celo main
     const client = publicClient();
     expect(await client.readContract({ address: registry, abi: identityRegistryAbi, functionName: "ownerOf", args: [r.agentId] })).toBe(addr.agent);
     expect(await client.readContract({ address: registry, abi: identityRegistryAbi, functionName: "tokenURI", args: [r.agentId] })).toBe(
-      `${APP_URL}/agent-registration.json`,
+      `${APP_URL}/agent.json`,
     );
     const file = JSON.parse(readFileSync(out, "utf8"));
     expect(file).toMatchObject({
@@ -420,7 +420,7 @@ describe.skipIf(skipReason !== null)("e2e: the demo flows on a fork of Celo main
     expect(a.agentId).not.toBe(r.agentId);
     expect(await client.readContract({ address: registry, abi: identityRegistryAbi, functionName: "ownerOf", args: [a.agentId] })).toBe(addr.auditor);
     expect(await client.readContract({ address: registry, abi: identityRegistryAbi, functionName: "tokenURI", args: [a.agentId] })).toBe(
-      `${APP_URL}/auditor-registration.json`,
+      `${APP_URL}/auditor.json`,
     );
     const auditorFile = JSON.parse(readFileSync(auditorOut, "utf8"));
     expect(auditorFile.name).toMatch(/^Auditor de /);

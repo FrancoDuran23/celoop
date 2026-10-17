@@ -3,6 +3,7 @@ pragma solidity ^0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 
+import {Attribution} from "../script/Attribution.sol";
 import {Deploy} from "../script/Deploy.s.sol";
 import {TreasuryPolicy} from "../src/TreasuryPolicy.sol";
 import {BoxFactory} from "../src/BoxFactory.sol";
@@ -116,6 +117,25 @@ contract DeployTest is Test {
     }
 
     /// Same values as DeployLocal.t.sol for the variables both read: tests share the process env.
+    /// The CREATE transaction input is this blob. The suffix is the tail, after constructor args.
+    function test_TaggedInitCodeEndsWithSuffix() public pure {
+        bytes memory args = abi.encode(address(1), address(2));
+        bytes memory initCode = Attribution.taggedInitCode(type(MockWARS).creationCode, args, SUFFIX);
+        assertEq(initCode.length, type(MockWARS).creationCode.length + args.length + SUFFIX.length);
+        bytes memory tail = new bytes(SUFFIX.length);
+        for (uint256 i = 0; i < SUFFIX.length; i++) {
+            tail[i] = initCode[initCode.length - SUFFIX.length + i];
+        }
+        assertEq(tail, SUFFIX);
+        // The constructor args are still a prefix of the tail the constructor decodes.
+        assertEq(keccak256(bytes.concat(type(MockWARS).creationCode, args)), keccak256(_head(initCode, initCode.length - SUFFIX.length)));
+    }
+
+    function _head(bytes memory data, uint256 length) internal pure returns (bytes memory head) {
+        head = new bytes(length);
+        for (uint256 i = 0; i < length; i++) head[i] = data[i];
+    }
+
     function test_ConfigFromEnv() public {
         vm.setEnv("SIGNERS", string.concat(vm.toString(a), ",", vm.toString(b), ",", vm.toString(c)));
         vm.setEnv("AGENT", vm.toString(agent));

@@ -12,6 +12,7 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { celo, celoSepolia } from "viem/chains";
+import { tagClient } from "./attribution";
 import { env, required } from "@/lib/env";
 
 /** Anvil's default chain id. A local fork of Celo mainnet keeps 42220 instead. */
@@ -87,13 +88,19 @@ export async function resolveChain(): Promise<Chain> {
   return chain;
 }
 
-/** Wallet client that signs with `account` (the agent's key by default) on the resolved chain. */
+/**
+ * Wallet client that signs with `account` (the agent's key by default) on the resolved chain.
+ * sendTransaction and writeContract are attribution-tagged. The CIP-64 sender does not use those
+ * methods: it tags `data` itself before prepareTransactionRequest (see sendAgentTx).
+ */
 export async function agentWalletClient(account: LocalAccount = agentAccount()): Promise<WalletClient> {
-  return createWalletClient({
-    account,
-    chain: await resolveChain(),
-    transport: http(rpcUrl()),
-  });
+  return tagClient(
+    createWalletClient({
+      account,
+      chain: await resolveChain(),
+      transport: http(rpcUrl()),
+    }),
+  );
 }
 
 /** Address from env, or a clear error naming the variable. */

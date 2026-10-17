@@ -1,5 +1,8 @@
 import { encodeFunctionData, type Address } from "viem";
+import { entryPoint07Abi, toPackedUserOperation } from "viem/account-abstraction";
+import { fromEntryPointCalldata } from "@celo/attribution-tags";
 import { describe, expect, it } from "vitest";
+import { readAttribution } from "@/lib/chain/attribution";
 import { treasuryPolicyAbi } from "@/lib/chain/abi";
 import { ENTRY_POINT, MULTI_SEND_CALL_ONLY } from "./constants";
 import type { ResolvedLink } from "./links";
@@ -77,6 +80,37 @@ describe("allowed operations", () => {
     expect(single.toLowerCase().endsWith(SUFFIX.slice(2))).toBe(true);
     expect(decodeSafeCallData(single, ctx)).toHaveLength(1);
     expect(decodeSafeCallData(batch, ctx)).toHaveLength(2);
+  });
+
+  it("puts the suffix on the userOp callData, which is what EntryPoint indexers read", async () => {
+    const account = await offlineSafeAccount();
+    const callData = await account.encodeCalls([{ to: TREASURY, data: approveData(BigInt(1)) }]);
+    expect(readAttribution(callData)).toEqual(["cooperadora_dev"]);
+    const input = encodeFunctionData({
+      abi: entryPoint07Abi,
+      functionName: "handleOps",
+      args: [
+        [
+          toPackedUserOperation({
+            sender: SIGNER_SAFE,
+            nonce: BigInt(0),
+            callData,
+            callGasLimit: BigInt(200_000),
+            verificationGasLimit: BigInt(500_000),
+            preVerificationGas: BigInt(50_000),
+            maxFeePerGas: BigInt(1),
+            maxPriorityFeePerGas: BigInt(1),
+            signature: "0x",
+          }),
+        ],
+        SIGNER_SAFE,
+      ],
+    });
+    // The bundler's outer input does not end with the tag: the signature is encoded after callData.
+    expect(readAttribution(input)).toBeNull();
+    const ops = fromEntryPointCalldata(input);
+    expect(ops?.[0]?.sender.toLowerCase()).toBe(SIGNER_SAFE.toLowerCase());
+    expect(ops?.[0]?.attribution?.codes).toEqual(["cooperadora_dev"]);
   });
 
   it("a first operation that deploys the Safe through the 1.4.1 factory", async () => {

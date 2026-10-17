@@ -26,8 +26,26 @@ const schema = z.object({
   DEPLOY_BLOCK: z.coerce.bigint().optional(),
   /** CIP-64 fee currency (USDT/USDC adapter) the agent pays gas in. Unset = pay in CELO (local/dev). */
   FEE_CURRENCY: address.optional(),
-  /** ERC-8021 attribution code issued at hackathon enrollment. Required on mainnet. */
+  /**
+   * ERC-8021 attribution code issued at hackathon enrollment. Required on mainnet.
+   * Agents on Open Rails assigned `celo_97a761e4eeab`.
+   */
   ATTRIBUTION_CODE: z.string().optional(),
+  /** ERC-8004 agent id of the treasurer, printed by scripts/register-agent.ts. Not a key. */
+  AGENT_ID: z.string().regex(/^\d+$/).optional(),
+  /** ERC-8004 agent id of the auditor, printed by scripts/register-agent.ts --auditor. */
+  AUDITOR_ID: z.string().regex(/^\d+$/).optional(),
+  /** Public address of the treasurer. Used on the agent card when AGENT_PRIVATE_KEY is unset. */
+  AGENT_ADDRESS: address.optional(),
+  /** Public address of the auditor. Used on the auditor card when AUDITOR_PRIVATE_KEY is unset. */
+  AUDITOR_ADDRESS: address.optional(),
+  AGENT_NAME: z.string().optional(),
+  AGENT_DESCRIPTION: z.string().optional(),
+  AUDITOR_NAME: z.string().optional(),
+  AUDITOR_DESCRIPTION: z.string().optional(),
+  TELEGRAM_BOT_USERNAME: z.string().optional(),
+  /** Overrides the ERC-8004 Identity Registry for the configured chain. */
+  IDENTITY_REGISTRY: address.optional(),
   PIMLICO_API_KEY: z.string().optional(),
   PIMLICO_SPONSORSHIP_POLICY_ID: z.string().optional(),
   DATABASE_URL: z.string().optional(),

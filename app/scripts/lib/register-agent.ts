@@ -1,95 +1,51 @@
-// ERC-8004: registers the agent in the Identity Registry and writes its registration file.
+// ERC-8004: registers the agent in the Identity Registry.
 // The treasurer and the auditor are two agents with two identities: `role: "auditor"` registers
-// the auditor with its own key (AUDITOR_PRIVATE_KEY) and its own file (auditor-registration.json).
+// the auditor with its own key (AUDITOR_PRIVATE_KEY).
 //
-// Format verified against EIP-8004 (eips.ethereum.org/EIPS/eip-8004) and
-// docs.celo.org/build-on-celo/build-with-ai/8004:
-//   - IdentityRegistry.register(string agentURI) returns (uint256 agentId); it mints the identity
-//     NFT to msg.sender and emits Registered(agentId, agentURI, owner). The agent id is read from
-//     the event (the return value is only a simulation-time guess).
-//   - The registration file has type "https://eips.ethereum.org/EIPS/eip-8004#registration-v1",
-//     name, description, image, services [{name, endpoint, version?}], x402Support, active,
-//     registrations [{agentId, agentRegistry: "eip155:<chainId>:<registry>"}] and the optional
-//     supportedTrust. The id only exists after registering, so the file is written twice. The URI
-//     stays the same (APP_URL/agent-registration.json), so no setAgentURI is needed.
+// The on-chain URI is APP_URL/agent.json (or /auditor.json). The Next app serves that card from
+// env (APP_URL, AGENT_ID / AUDITOR_ID, the wallet). The id does not exist until this transaction
+// is mined, so the card's `registrations` array stays empty until that env var is set. The URI
+// itself does not change, so setAgentURI is only needed when the URL changes
+// (scripts/update-agent-uri.ts). A snapshot of the file, with the id filled in, is written locally.
+//
+// IdentityRegistry.register(string agentURI) returns (uint256 agentId). The id is read from the
+// Registered event: the return value is only a simulation-time guess. The transaction goes through
+// sendAgentTx, so it carries the ERC-8021 suffix.
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { eq } from "drizzle-orm";
-import { decodeEventLog, encodeFunctionData, isAddressEqual, parseAbi, type Address, type Hex } from "viem";
+import { decodeEventLog, encodeFunctionData, isAddressEqual, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import type { Db } from "@/db";
 import { agentTxs, cooperadora } from "@/db/schema";
 import { sendAgentTx } from "@/lib/chain/agent";
 import { agentAccount, auditorAccount } from "@/lib/chain/clients";
 import { publicClient } from "@/lib/chain/clients";
+import {
+  agentCardUri,
+  cardPath,
+  describeAgent,
+  identityRegistryAbi,
+  IDENTITY_REGISTRY,
+  type AgentRole,
+  type RegistrationFile,
+  registrationFile,
+  REGISTRATION_TYPE,
+} from "@/lib/erc8004";
 import { resetEnv } from "@/lib/env";
 import { APP_DIR, openScriptDb } from "./db";
-import { chainName, checkNode, EXPECTED_CHAIN_ID, LOCAL_RPC, safetyCut } from "./guard";
-import { APP_NAME } from "@/lib/brand";
+import { chainName, checkNode, LOCAL_RPC, safetyCut } from "./guard";
 
-export const IDENTITY_REGISTRY: Record<number, Address> = {
-  [EXPECTED_CHAIN_ID.mainnet]: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
-  [EXPECTED_CHAIN_ID.sepolia]: "0x8004A818BFB912233c491871b3d84c89A494BD9e",
-};
+export { IDENTITY_REGISTRY, REGISTRATION_TYPE, identityRegistryAbi, registrationFile };
+export type { AgentRole, RegistrationFile };
 
-export const REGISTRATION_TYPE = "https://eips.ethereum.org/EIPS/eip-8004#registration-v1";
 export const DEFAULT_REGISTRATION_FILE = path.join(APP_DIR, "public/agent-registration.json");
 export const AUDITOR_REGISTRATION_FILE = path.join(APP_DIR, "public/auditor-registration.json");
 
-export type AgentRole = "treasurer" | "auditor";
-
 const ROLE = {
-  treasurer: { keyVar: "AGENT_PRIVATE_KEY", file: "agent-registration.json", nameVar: "AGENT_NAME", descriptionVar: "AGENT_DESCRIPTION" },
-  auditor: { keyVar: "AUDITOR_PRIVATE_KEY", file: "auditor-registration.json", nameVar: "AUDITOR_NAME", descriptionVar: "AUDITOR_DESCRIPTION" },
+  treasurer: { keyVar: "AGENT_PRIVATE_KEY", idVar: "AGENT_ID", nameVar: "AGENT_NAME", descriptionVar: "AGENT_DESCRIPTION" },
+  auditor: { keyVar: "AUDITOR_PRIVATE_KEY", idVar: "AUDITOR_ID", nameVar: "AUDITOR_NAME", descriptionVar: "AUDITOR_DESCRIPTION" },
 } as const;
-
-export const identityRegistryAbi = parseAbi([
-  "function register(string agentURI) returns (uint256 agentId)",
-  "function balanceOf(address owner) view returns (uint256)",
-  "function ownerOf(uint256 tokenId) view returns (address)",
-  "function tokenURI(uint256 tokenId) view returns (string)",
-  "event Registered(uint256 indexed agentId, string agentURI, address indexed owner)",
-]);
-
-export type RegistrationFile = {
-  type: string;
-  name: string;
-  description: string;
-  image: string;
-  services: { name: string; endpoint: string; version?: string }[];
-  x402Support: boolean;
-  active: boolean;
-  registrations: { agentId: number; agentRegistry: string }[];
-};
-
-const base = (url: string) => url.replace(/\/+$/, "");
-
-export function registrationFile(args: {
-  name: string;
-  description: string;
-  appUrl: string;
-  agent: Address;
-  chainId: number;
-  registry: Address;
-  agentId?: bigint;
-  telegramBot?: string;
-}): RegistrationFile {
-  const app = base(args.appUrl);
-  const services: RegistrationFile["services"] = [{ name: "web", endpoint: `${app}/` }];
-  if (args.telegramBot) services.push({ name: "telegram", endpoint: `https://t.me/${args.telegramBot.replace(/^@/, "")}` });
-  services.push({ name: "agentWallet", endpoint: `eip155:${args.chainId}:${args.agent}` });
-  return {
-    type: REGISTRATION_TYPE,
-    name: args.name,
-    description: args.description,
-    image: `${app}/favicon.ico`,
-    services,
-    x402Support: false,
-    active: true,
-    registrations:
-      args.agentId === undefined ? [] : [{ agentId: Number(args.agentId), agentRegistry: `eip155:${args.chainId}:${args.registry}` }],
-  };
-}
 
 export type RegisterOptions = {
   yes?: boolean;
@@ -121,7 +77,7 @@ export async function registerAgent(opts: RegisterOptions = {}): Promise<Registe
   if (!agentKey) throw new Error(`Falta ${r.keyVar}: la identidad queda a nombre de esa cuenta.`);
   const agent = privateKeyToAccount(agentKey).address;
   const appUrl = get("APP_URL") ?? "http://localhost:3000";
-  const agentURI = `${base(appUrl)}/${r.file}`;
+  const agentURI = agentCardUri(appUrl, role);
   const attributionCode = get("ATTRIBUTION_CODE");
 
   log(`Registro ERC-8004 del ${role === "auditor" ? "auditor" : "agente tesorero"} ${agent}`);
@@ -155,21 +111,19 @@ export async function registerAgent(opts: RegisterOptions = {}): Promise<Registe
   const handle = await openScriptDb({ db: opts.db, databaseUrl: get("DATABASE_URL"), log });
   try {
     const [coop] = await handle.db.select().from(cooperadora).catch(() => []);
-    const of = coop ? ` de ${coop.name} (${coop.school})` : " de una cooperadora escolar argentina";
-    const name =
-      get(r.nameVar) ?? (coop ? `${role === "auditor" ? "Auditor" : "Tesorero"} de ${coop.name}` : `${APP_NAME}${role === "auditor" ? " (auditor)" : ""}`);
-    const description =
-      get(r.descriptionVar) ??
-      (role === "auditor"
-        ? `Agente auditor${of}. Revisa cada pago que propone el agente tesorero antes de que salga: vuelve a leer el QR de la factura, ` +
-          "compara el archivo y el monto con lo que está en el contrato y busca compras partidas o facturas repetidas. " +
-          "Con su propia clave solo puede aprobar u observar un pago: lo observado lo deciden las personas que firman. " +
-          "Una vez por día verifica que el saldo del tesoro coincida con los movimientos registrados. Publica un informe por pago."
-        : `Agente tesorero${of}. ` +
-          "Lee las facturas que carga la comisión, paga a proveedores habilitados dentro de las reglas del contrato " +
-          "(lo que las excede lo firman las personas, y lo chico lo revisa antes el agente auditor), recibe los aportes de los socios en wARS y publica la rendición mensual. " +
-          "Se usa por Telegram.");
-    const fileArgs = { name, description, appUrl, agent, chainId, registry, telegramBot: get("TELEGRAM_BOT_USERNAME") };
+    const copy = describeAgent(role, coop ? { name: coop.name, school: coop.school } : null);
+    const name = get(r.nameVar) ?? copy.name;
+    const description = get(r.descriptionVar) ?? copy.description;
+    const fileArgs = {
+      name,
+      description,
+      appUrl,
+      agent,
+      chainId,
+      registry,
+      telegramBot: get("TELEGRAM_BOT_USERNAME"),
+      attributionCode,
+    };
     const outFile = opts.outFile ?? (role === "auditor" ? AUDITOR_REGISTRATION_FILE : DEFAULT_REGISTRATION_FILE);
     const write = (file: RegistrationFile) => {
       mkdirSync(path.dirname(outFile), { recursive: true });
@@ -214,8 +168,10 @@ export async function registerAgent(opts: RegisterOptions = {}): Promise<Registe
     const file = registrationFile({ ...fileArgs, agentId });
     write(file);
     log(`Agente registrado: agentId ${agentId} (tx ${sent.txHash}).`);
-    log(`Archivo de registro: ${outFile}. Publicalo en ${agentURI} (va en app/public).`);
-    log(`${role === "auditor" ? "AUDITOR_ID" : "AGENT_ID"}=${agentId}`);
+    log(`Copia local del registro (con el id): ${outFile}.`);
+    log(`La app sirve la tarjeta en ${agentURI}. Poné esto en el entorno y reiniciá:`);
+    log(`${r.idVar}=${agentId}`);
+    log(`Hasta entonces ${cardPath(role)} no incluye registrations. La URI no cambia, así que no hace falta setAgentURI.`);
     return { status: "registered", agentId, txHash: sent.txHash, agentURI, file, outFile };
   } finally {
     await handle.close();

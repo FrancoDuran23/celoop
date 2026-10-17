@@ -54,7 +54,11 @@ export async function passkeySafeAccount(opts: PasskeySafeOptions) {
     owners: [passkeyOwner(opts)],
     version: SAFE_VERSION,
     entryPoint: ENTRY_POINT,
-    // The tag goes at the end of the Safe's callData, which is where /api/bundler checks for it.
+    // The tag is concatenated onto the Safe's executeUserOp calldata (permissionless does
+    // concat([calldata, onchainIdentifier])). That is the UserOperation callData. The bundler's
+    // handleOps transaction does not end with the tag — the signature is ABI-encoded after the
+    // callData — so ERC-8021 indexers read it with fromEntryPointCalldata, not off tx.input.
+    // /api/bundler checks the same tail before it sponsors the operation.
     onchainIdentifier: opts.attributionSuffix,
     address: opts.address,
   });

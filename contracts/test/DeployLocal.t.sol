@@ -32,4 +32,24 @@ contract DeployLocalTest is Test {
         assertEq(BoxFactory(d.boxFactory).treasury(), d.treasury);
         assertEq(BoxFactory(d.boxFactory).token(), d.token);
     }
+
+    /// Same deployment with the ERC-8021 suffix after every constructor. The contracts still decode
+    /// their arguments; the suffix is only on the creation input.
+    function test_DeployLocal_WithAttributionSuffix() public {
+        address a = makeAddr("a");
+        address agent = makeAddr("agent");
+        vm.setEnv("SIGNERS", vm.toString(a));
+        vm.setEnv("AGENT", vm.toString(agent));
+        vm.setEnv("THRESHOLD", "1");
+        // toDataSuffix("cooperadora_dev"), from @celo/attribution-tags.
+        bytes memory suffix = hex"636f6f70657261646f72615f6465760f0080218021802180218021802180218021";
+        vm.setEnv("ATTRIBUTION_SUFFIX", vm.toString(suffix));
+
+        DeployLocal.Deployment memory d = new DeployLocal().run();
+        TreasuryPolicy t = TreasuryPolicy(d.treasury);
+        assertEq(t.agent(), agent);
+        assertTrue(t.isSigner(a));
+        assertEq(BoxFactory(d.boxFactory).treasury(), d.treasury);
+        assertEq(BoxFactory(d.boxFactory).token(), d.token);
+    }
 }

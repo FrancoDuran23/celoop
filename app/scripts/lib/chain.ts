@@ -10,7 +10,7 @@ import {
   type TransactionReceipt,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { withAttribution } from "@/lib/chain/attribution";
+import { tagClient } from "@/lib/chain/attribution";
 import { publicClient, resolveChain } from "@/lib/chain/clients";
 import { env } from "@/lib/env";
 import { waitMined } from "@/lib/wallet/testing/local-bundler";
@@ -27,8 +27,10 @@ export const rpcUrl = () => env().RPC_URL ?? LOCAL_RPC;
 export async function sendTagged(key: Hex, to: Address, data: Hex): Promise<TransactionReceipt> {
   const account = privateKeyToAccount(key);
   const chain = await resolveChain();
-  const wallet = createWalletClient({ account, chain, transport: http(rpcUrl()) });
-  const hash = await wallet.sendTransaction({ account, chain, to, data: withAttribution(data) });
+  // Package extension: the suffix is appended inside sendTransaction. Passing raw calldata here
+  // is enough; an already-tagged payload would be merged, not doubled.
+  const wallet = tagClient(createWalletClient({ account, chain, transport: http(rpcUrl()) }));
+  const hash = await wallet.sendTransaction({ account, chain, to, data });
   const receipt = await waitMined(publicClient(), hash);
   if (receipt.status !== "success") throw new Error(`la transacción ${hash} revirtió`);
   return receipt;
